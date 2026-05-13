@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Candidate {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  phone     String?
+  role      String?
+  location  String?
+  status    String   @default("Invited")
+  score     Float?
+  resume    String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  answers   Answer[]
+  interviews InterviewAssignment[]
+}
+
+model Interview {
+  id          String   @id @default(cuid())
+  title       String
+  category    String?
+  difficulty  String?
+  status      String   @default("Draft")
+  duration    String?
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  questions   Question[]
+  assignments InterviewAssignment[]
+}
+
+model Question {
+  id          String   @id @default(cuid())
+  interviewId String
+  skill       String?
+  question    String
+  difficulty  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  answers     Answer[]
+}
+
+model Answer {
+  id          String   @id @default(cuid())
+  candidateId String
+  questionId  String
+  answer      String
+  rating      Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  question    Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model InterviewAssignment {
+  id          String   @id @default(cuid())
+  candidateId String
+  interviewId String
+  status      String   @default("Invited")
+  score       Float?
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, interviewId])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
