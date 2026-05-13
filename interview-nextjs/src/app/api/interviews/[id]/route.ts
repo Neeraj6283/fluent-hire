@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
+import { logActivity } from "@/lib/activity";
 
 export async function GET(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getAuthUser();
@@ -63,7 +64,7 @@ export async function GET(
 
 export async function DELETE(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getAuthUser();
@@ -98,6 +99,9 @@ export async function DELETE(
     await prisma.interview.delete({
       where: { id },
     });
+
+    // Log Activity
+    await logActivity(orgId, (user as any).userId, "interview_deleted", `Deleted interview: ${id}`);
 
     return NextResponse.json({ message: "Interview deleted successfully" });
   } catch (error: any) {

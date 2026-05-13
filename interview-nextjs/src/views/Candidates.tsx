@@ -5,6 +5,7 @@ import { Plus, Search, MoreHorizontal, Mail, Filter, Download, Eye, Trash2, Load
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -16,6 +17,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { PageHeader } from "@/components/PageHeader";
 import { toast } from "sonner";
 
@@ -31,6 +35,9 @@ export function Candidates() {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [resendTarget, setResendTarget] = useState<any>(null);
+  const [newEmail, setNewEmail] = useState("");
+  const [isResending, setIsResending] = useState(false);
 
   useEffect(() => {
     fetchCandidates();
@@ -71,6 +78,34 @@ export function Candidates() {
       toast.error("An error occurred while deleting");
     } finally {
       setPendingDelete(null);
+    }
+  };
+
+  const handleResend = async () => {
+    if (!resendTarget) return;
+    setIsResending(true);
+    try {
+      const res = await fetch("/api/candidates/resend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          id: resendTarget.id,
+          email: newEmail
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(data.message || "Invitation resent successfully");
+        setResendTarget(null);
+        fetchCandidates(); // Refresh list to show updated email
+      } else {
+        toast.error(data.error || "Failed to resend invitation");
+      }
+    } catch (error) {
+      toast.error("An error occurred while resending");
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -203,7 +238,19 @@ export function Candidates() {
                       </td>
                       <td className="px-3 py-3 text-right">
                         <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8"><Mail className="h-4 w-4" /></Button>
+                          {displayStatus === "Draft" && (
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8"
+                              onClick={() => {
+                                setResendTarget(c);
+                                setNewEmail(c.email);
+                              }}
+                            >
+                              <Mail className="h-4 w-4" />
+                            </Button>
+                          )}
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button>
@@ -258,6 +305,42 @@ export function Candidates() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!resendTarget} onOpenChange={(o) => !o && setResendTarget(null)}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Send Interview Invitation</DialogTitle>
+            <DialogDescription>
+              Confirm or update the email address to send the interview invitation to {resendTarget?.name}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="email" className="mb-2 block text-sm font-medium">
+              Candidate Email
+            </Label>
+            <Input 
+              id="email"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              placeholder="candidate@example.com"
+              className="rounded-xl"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl" onClick={() => setResendTarget(null)}>
+              Cancel
+            </Button>
+            <Button 
+              className="rounded-xl bg-gradient-primary text-white" 
+              onClick={handleResend}
+              disabled={isResending || !newEmail.trim()}
+            >
+              {isResending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}
+              Send Invitation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

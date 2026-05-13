@@ -75,9 +75,19 @@ export function CreateCandidate() {
     fetchTemplates();
   }, []);
 
-  const handleCreate = async () => {
-    if (!first || !email || !interview) {
-      toast.error("Please fill in required fields");
+  const handleCreate = async (shouldSend: boolean) => {
+    // Validate all required fields
+    const errors: string[] = [];
+    
+    if (!first.trim()) errors.push("First name is required");
+    if (!email.trim()) errors.push("Email is required");
+    if (!interview) errors.push("Interview template is required");
+    if (!date) errors.push("Interview date is required");
+    if (!slot) errors.push("Interview time slot is required");
+    if (!resume) errors.push("Resume/CV file is required");
+    
+    if (errors.length > 0) {
+      toast.error(errors.join("\n"));
       return;
     }
 
@@ -92,6 +102,10 @@ export function CreateCandidate() {
       formData.append("location", location);
       formData.append("notes", notes);
       formData.append("interviewId", interview);
+      formData.append("date", date);
+      formData.append("timeSlot", slot);
+      formData.append("timezone", tz);
+      formData.append("sendEmail", String(shouldSend));
       if (resume) {
         formData.append("resume", resume);
       }
@@ -101,15 +115,22 @@ export function CreateCandidate() {
         body: formData,
       });
 
+      const data = await res.json();
+
       if (res.ok) {
-        toast.success("Candidate invited successfully");
+        if (data.emailError) {
+          toast.warning(data.message, { duration: 6000 });
+        } else {
+          toast.success(data.message);
+        }
         router.push("/candidates");
       } else {
-        const error = await res.json();
-        toast.error(error.error || "Failed to invite candidate");
+        const errorMsg = data.error || "Failed to invite candidate";
+        toast.error(errorMsg);
       }
     } catch (error) {
-      toast.error("An error occurred");
+      console.error("Error creating candidate:", error);
+      toast.error("An error occurred. Please try again later");
     } finally {
       setIsLoading(false);
     }
@@ -131,10 +152,23 @@ export function CreateCandidate() {
         description="Add candidate details and schedule their AI interview in one go."
         actions={
           <>
-            <Button variant="outline" className="rounded-xl" disabled={isLoading}>Save as draft</Button>
+            <Button 
+              variant="outline" 
+              className="rounded-xl" 
+              disabled={isLoading}
+              onClick={() => {
+                setSendNow(false);
+                handleCreate(false);
+              }}
+            >
+              Save as draft
+            </Button>
             <Button 
               className="rounded-xl bg-gradient-primary text-white shadow-elegant"
-              onClick={handleCreate}
+              onClick={() => {
+                setSendNow(true);
+                handleCreate(true);
+              }}
               disabled={isLoading}
             >
               {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
@@ -158,13 +192,13 @@ export function CreateCandidate() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="First name" icon={<User className="h-3.5 w-3.5" />}>
+                <Field label="First name" icon={<User className="h-3.5 w-3.5" />} required>
                   <Input value={first} onChange={(e) => setFirst(e.target.value)} placeholder="Mira" className="rounded-xl" />
                 </Field>
                 <Field label="Last name">
                   <Input value={last} onChange={(e) => setLast(e.target.value)} placeholder="Khan" className="rounded-xl" />
                 </Field>
-                <Field label="Email" icon={<Mail className="h-3.5 w-3.5" />}>
+                <Field label="Email" icon={<Mail className="h-3.5 w-3.5" />} required>
                   <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="mira@acme.com" className="rounded-xl" />
                 </Field>
                 <Field label="Phone (optional)" icon={<Phone className="h-3.5 w-3.5" />}>
@@ -179,8 +213,8 @@ export function CreateCandidate() {
                 <Field label="Location" icon={<MapPin className="h-3.5 w-3.5" />}>
                   <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Berlin, DE" className="rounded-xl" />
                 </Field>
-                <Field label="Resume / CV">
-                  <label className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 px-3 text-sm text-muted-foreground hover:bg-muted/50">
+                <Field label="Resume / CV" required>
+                  <label className={`flex h-9 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed px-3 text-sm transition ${ resume ? "border-primary bg-primary/5" : "border-border bg-muted/30 hover:bg-muted/50"} ${!resume ? "border-red-300" : ""}`}>
                     <Upload className="h-4 w-4" /> 
                     {resume ? resume.name : "Upload PDF or DOCX"}
                     <input 
@@ -224,7 +258,7 @@ export function CreateCandidate() {
 
               <div>
                 <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                  Interview template
+                  Interview template <span className="text-red-500">*</span>
                 </Label>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {templates.length === 0 ? (
@@ -266,33 +300,28 @@ export function CreateCandidate() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-3">
-                <Field label="Date" icon={<CalendarDays className="h-3.5 w-3.5" />}>
+                <div>
+                  <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                    Date <span className="text-red-500">*</span>
+                  </Label>
                   <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-xl" />
-                </Field>
-                <Field label="Timezone" icon={<Globe className="h-3.5 w-3.5" />}>
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                    Timezone
+                  </Label>
                   <Select value={tz} onValueChange={setTz}>
                     <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {timezones.map((z) => <SelectItem key={z} value={z}>{z}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                </Field>
-                {/* <Field label="Invite expires in">
-                  <Select value={expiry} onValueChange={setExpiry}>
-                    <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="3">3 days</SelectItem>
-                      <SelectItem value="7">7 days</SelectItem>
-                      <SelectItem value="14">14 days</SelectItem>
-                      <SelectItem value="30">30 days</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field> */}
+                </div>
               </div>
 
               <div>
                 <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                  Time slot
+                  Time slot <span className="text-red-500">*</span>
                 </Label>
                 <div className="flex flex-wrap gap-2">
                   {slots.map((s) => {
@@ -421,10 +450,12 @@ export function CreateCandidate() {
 function Field({
   label,
   icon,
+  required,
   children,
 }: {
   label: string;
   icon?: React.ReactNode;
+  required?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -432,6 +463,7 @@ function Field({
       <Label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         {icon}
         {label}
+        {required && <span className="text-red-500">*</span>}
       </Label>
       {children}
     </div>

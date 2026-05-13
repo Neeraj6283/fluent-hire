@@ -4,7 +4,7 @@ import { getAuthUser } from "@/lib/auth";
 
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const authUser = await getAuthUser();
@@ -12,7 +12,7 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { id } = await params;
+    const { id } = await context.params;
 
     const candidate = await (prisma.candidate as any).findUnique({
       where: {

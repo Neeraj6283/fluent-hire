@@ -33,33 +33,44 @@ export async function POST(request: Request) {
     const location = formData.get("location") as string;
     const notes = formData.get("notes") as string;
     const phone = formData.get("phone") as string;
+    const date = formData.get("date") as string;
+    const timeSlot = formData.get("timeSlot") as string;
+    const timezone = formData.get("timezone") as string;
     const resumeFile = formData.get("resume") as File | null;
+    const sendEmail = formData.get("sendEmail") === "true";
 
-    if (!firstName || !email || !interviewId) {
+    console.log("DEBUG: POST /api/candidates - sendEmail flag:", sendEmail);
+
+    if (!firstName || !email || !interviewId || !date || !timeSlot) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    let resumePath = "";
-    if (resumeFile) {
-      const bytes = await resumeFile.arrayBuffer();
-      const buffer = Buffer.from(bytes);
-
-      // Create uploads directory if it doesn't exist
-      const uploadDir = path.join(process.cwd(), "public", "uploads");
-      try {
-        await mkdir(uploadDir, { recursive: true });
-      } catch (err) {
-        // Directory already exists or error
-      }
-
-      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-      const filename = `${uniqueSuffix}-${resumeFile.name.replace(/\s+/g, "-")}`;
-      const filePath = path.join(uploadDir, filename);
-      await writeFile(filePath, buffer);
-      resumePath = `/uploads/${filename}`;
+    if (!resumeFile) {
+      return NextResponse.json({ error: "Resume file is required" }, { status: 400 });
     }
 
+    let resumePath = "";
+    const bytes = await resumeFile.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+
+    // Create uploads directory if it doesn't exist
+    const uploadDir = path.join(process.cwd(), "public", "uploads");
+    try {
+      await mkdir(uploadDir, { recursive: true });
+    } catch (err) {
+      // Directory already exists or error
+    }
+
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const filename = `${uniqueSuffix}-${resumeFile.name.replace(/\s+/g, "-")}`;
+    const filePath = path.join(uploadDir, filename);
+    await writeFile(filePath, buffer);
+    resumePath = `/uploads/${filename}`;
+
     const fullName = `${firstName} ${lastName}`.trim();
+
+    // Generate temp password hash BEFORE transaction (bcrypt is slow)
+    const tempPassword = await bcrypt.hash(Math.random().toString(36).slice(-8), 10);
 
     // Everything inside a transaction to ensure consistency
     const result = await prisma.$transaction(async (tx) => {
@@ -74,7 +85,6 @@ export async function POST(request: Request) {
           });
         }
       } else {
-        const tempPassword = await bcrypt.hash(Math.random().toString(36).slice(-8), 10);
         user = await (tx.user as any).create({
           data: {
             name: fullName,
@@ -99,9 +109,10 @@ export async function POST(request: Request) {
             notes,
             resume: resumePath || undefined,
             organizationId: orgId,
-            status: "Invited",
+            status: sendEmail ? "Invited" : "Draft",
           }
         });
+        console.log(`DEBUG: Updated candidate status to: ${sendEmail ? "Invited" : "Draft"}`);
       } else {
         candidate = await (tx.candidate as any).create({
           data: {
@@ -113,9 +124,10 @@ export async function POST(request: Request) {
             notes,
             resume: resumePath,
             organizationId: orgId,
-            status: "Invited",
+            status: sendEmail ? "Invited" : "Draft",
           },
         });
+        console.log(`DEBUG: Created candidate with status: ${sendEmail ? "Invited" : "Draft"}`);
       }
 
       // 3. Assign Interview (if not already assigned)
@@ -133,9 +145,18 @@ export async function POST(request: Request) {
           data: {
             candidateId: candidate.id,
             interviewId: interviewId,
-            status: "Invited",
+            status: sendEmail ? "Invited" : "Draft",
+            date: date ? new Date(date) : undefined,
           },
         });
+        console.log(`DEBUG: Created assignment with status: ${sendEmail ? "Invited" : "Draft"}`);
+      } else {
+        // Update status of existing assignment if needed
+        await tx.interviewAssignment.update({
+          where: { id: existingAssignment.id },
+          data: { status: sendEmail ? "Invited" : "Draft" }
+        });
+        console.log(`DEBUG: Updated existing assignment status to: ${sendEmail ? "Invited" : "Draft"}`);
       }
 
       return { candidate, user };
@@ -148,16 +169,50 @@ export async function POST(request: Request) {
       .setExpirationTime("24h")
       .sign(JWT_SECRET);
 
-    // 5. Send Email
-    await sendPasswordSetEmail(result.user.email, result.user.name, token);
+    // 5. Send Email (if requested)
+    let emailSent = false;
+    let emailError = null;
+    if (sendEmail) {
+      console.log(`DEBUG: Attempting to send email to: ${result.user.email}`);
+      try {
+        await sendPasswordSetEmail(result.user.email, result.user.name, token);
+        emailSent = true;
+        console.log("DEBUG: Email sent successfully");
+      } catch (error: any) {
+        console.error("DEBUG: Email sending error in API:", error);
+        emailError = error.message;
+
+        // CRITICAL FIX: If email fails, update candidate and assignment status to "Draft"
+        console.log("DEBUG: Reverting status to Draft due to email failure...");
+        await prisma.$transaction([
+          (prisma.candidate as any).update({
+            where: { id: result.candidate.id },
+            data: { status: "Draft" }
+          }),
+          (prisma.interviewAssignment as any).updateMany({
+            where: { candidateId: result.candidate.id },
+            data: { status: "Draft" }
+          })
+        ]);
+        console.log("DEBUG: Status reverted to Draft successfully");
+      }
+    } else {
+      console.log("DEBUG: Skipping email sending (sendEmail is false)");
+    }
 
     // 6. Log Activities
-    await logActivity(orgId, authUser.id, "candidate_created", `Created candidate: ${fullName}`);
-    await logActivity(orgId, authUser.id, "interview_scheduled", `Scheduled interview for ${fullName}`);
+    await logActivity(orgId, authUser.userId, "candidate_created", `Created candidate: ${fullName}`);
+    if (sendEmail && emailSent) {
+      await logActivity(orgId, authUser.userId, "interview_scheduled", `Scheduled interview for ${fullName}`);
+    }
 
     return NextResponse.json({
-      message: "Candidate created and invitation sent",
+      message: emailError 
+        ? "Issue sending mail, candidate created, please send mail after some time" 
+        : (sendEmail ? "Candidate created and invitation sent" : "Candidate created and scheduled as draft"),
       candidate: result.candidate,
+      emailSent,
+      emailError
     }, { status: 201 });
 
   } catch (error: any) {
@@ -238,6 +293,9 @@ export async function DELETE(request: Request) {
     await (prisma.candidate as any).delete({
       where: { id }
     });
+
+    // Log Activity
+    await logActivity(candidate.organizationId, authUser.userId, "candidate_deleted", `Deleted candidate: ${candidate.email}`);
 
     return NextResponse.json({ message: "Candidate and associated account deleted successfully" });
   } catch (error) {

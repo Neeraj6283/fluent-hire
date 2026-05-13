@@ -108,3 +108,34 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function PATCH(request: Request) {
+  try {
+    const user = await getAuthUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const { id, status } = await request.json();
+    if (!id || !status) return NextResponse.json({ error: "ID and status are required" }, { status: 400 });
+
+    const interview = await (prisma.interview as any).update({
+      where: { id },
+      data: { status }
+    });
+
+    // Log Activity
+    let orgId = (user as any).organizationId;
+    if (!orgId) {
+      const dbUser = await (prisma.user as any).findUnique({
+        where: { id: (user as any).userId },
+        select: { organizationId: true }
+      });
+      orgId = (dbUser as any)?.organizationId || null;
+    }
+    
+    await logActivity(orgId, (user as any).userId, "interview_published", `Published interview: ${interview.title}`);
+
+    return NextResponse.json(interview);
+  } catch (error) {
+    return NextResponse.json({ error: "Failed to update interview" }, { status: 500 });
+  }
+}

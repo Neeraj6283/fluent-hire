@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Search, MoreHorizontal, Mic, Filter, Eye, Trash2, Loader2 } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Mic, Filter, Eye, Trash2, Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -101,6 +101,24 @@ export function Interviews() {
       toast.error("An error occurred while deleting the interview");
     }
     setPendingDelete(null);
+  };
+
+  const handlePublish = async (id: string) => {
+    try {
+      const response = await fetch("/api/interviews", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: "Public" }),
+      });
+      if (response.ok) {
+        toast.success("Interview published successfully");
+        fetchInterviews();
+      } else {
+        toast.error("Failed to publish interview");
+      }
+    } catch (error) {
+      toast.error("An error occurred while publishing");
+    }
   };
 
   return (
@@ -237,6 +255,11 @@ export function Interviews() {
                                 <Eye className="mr-2 h-4 w-4" /> View details
                               </Link>
                             </DropdownMenuItem>
+                            {r.status === "Draft" && (
+                              <DropdownMenuItem onSelect={() => handlePublish(r.id)}>
+                                <Send className="mr-2 h-4 w-4" /> Publish
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"

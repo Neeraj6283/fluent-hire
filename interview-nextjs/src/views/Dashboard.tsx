@@ -247,6 +247,10 @@ export function Dashboard() {
                     interview_created: 'bg-ai',
                     candidate_created: 'bg-primary',
                     interview_scheduled: 'bg-info',
+                    interview_updated: 'bg-warning',
+                    interview_deleted: 'bg-destructive',
+                    candidate_deleted: 'bg-destructive',
+                    interview_published: 'bg-success',
                   };
                   
                   // Helper to format time relative to now (simple version)
