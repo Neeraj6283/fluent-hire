@@ -35,6 +35,10 @@ type Interview = {
   status: string;
   duration: string;
   createdAt: string;
+  userId: string;
+  user?: {
+    name: string;
+  };
   _count: {
     questions: number;
   };
@@ -44,6 +48,11 @@ export function Interviews() {
   const [rows, setRows] = useState<Interview[]>([]);
   const [loading, setLoading] = useState(true);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+
+  // Filter states
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("all");
+  const [difficulty, setDifficulty] = useState("all");
 
   useEffect(() => {
     fetchInterviews();
@@ -65,6 +74,13 @@ export function Interviews() {
       setLoading(false);
     }
   };
+
+  const filteredRows = rows.filter((r) => {
+    const matchesSearch = r.title.toLowerCase().includes(search.toLowerCase());
+    const matchesCategory = category === "all" || r.category?.toLowerCase() === category.toLowerCase();
+    const matchesDifficulty = difficulty === "all" || r.difficulty?.toLowerCase() === difficulty.toLowerCase();
+    return matchesSearch && matchesCategory && matchesDifficulty;
+  });
 
   const target = rows.find((r) => r.id === pendingDelete);
 
@@ -106,28 +122,44 @@ export function Interviews() {
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative max-w-sm flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="h-9 rounded-xl pl-9" placeholder="Search interviews…" />
+            <Input 
+              className="h-9 rounded-xl pl-9" 
+              placeholder="Search interviews…" 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
-          <Select>
+          <Select value={category} onValueChange={setCategory}>
             <SelectTrigger className="h-9 w-36 rounded-xl"><SelectValue placeholder="Category" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All categories</SelectItem>
-              <SelectItem value="backend">Backend</SelectItem>
-              <SelectItem value="frontend">Frontend</SelectItem>
-              <SelectItem value="tester">Tester</SelectItem>
+              <SelectItem value="Backend">Backend</SelectItem>
+              <SelectItem value="Frontend">Frontend</SelectItem>
+              <SelectItem value="Tester">Tester</SelectItem>
             </SelectContent>
           </Select>
-          <Select>
+          <Select value={difficulty} onValueChange={setDifficulty}>
             <SelectTrigger className="h-9 w-36 rounded-xl"><SelectValue placeholder="Difficulty" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="easy">Easy</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="hard">Hard</SelectItem>
+              <SelectItem value="all">All difficulties</SelectItem>
+              <SelectItem value="Easy">Easy</SelectItem>
+              <SelectItem value="Medium">Medium</SelectItem>
+              <SelectItem value="Hard">Hard</SelectItem>
             </SelectContent>
           </Select>
-          <Button variant="outline" className="h-9 rounded-xl">
-            <Filter className="mr-2 h-4 w-4" /> More filters
-          </Button>
+          {(search || category !== "all" || difficulty !== "all") && (
+            <Button 
+              variant="ghost" 
+              className="h-9 rounded-xl text-xs"
+              onClick={() => {
+                setSearch("");
+                setCategory("all");
+                setDifficulty("all");
+              }}
+            >
+              Clear filters
+            </Button>
+          )}
         </div>
 
         <div className="mt-4 overflow-x-auto">
@@ -140,24 +172,27 @@ export function Interviews() {
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground">
                   <th className="px-3 py-2"><Checkbox /></th>
-                  <th className="px-3 py-2 font-medium">Title</th>
+                  <th className="px-3 py-2 font-medium">Interview</th>
                   <th className="px-3 py-2 font-medium">Category</th>
                   <th className="px-3 py-2 font-medium">Difficulty</th>
                   <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Created By</th>
                   <th className="px-3 py-2 font-medium">Questions</th>
                   <th className="px-3 py-2 font-medium">Created</th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 ? (
+                {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-10 text-center text-muted-foreground">
-                      No interviews found. Create your first one to get started!
+                    <td colSpan={9} className="py-10 text-center text-muted-foreground">
+                      {rows.length === 0 
+                        ? "No interviews found. Create your first one to get started!" 
+                        : "No interviews match your filters."}
                     </td>
                   </tr>
                 ) : (
-                  rows.map((r) => (
+                  filteredRows.map((r) => (
                     <tr key={r.id} className="border-t transition hover:bg-muted/40">
                       <td className="px-3 py-3"><Checkbox /></td>
                       <td className="px-3 py-3">
@@ -184,6 +219,7 @@ export function Interviews() {
                           <Badge variant="secondary" className="rounded-full">○ Draft</Badge>
                         )}
                       </td>
+                      <td className="px-3 py-3 text-muted-foreground">{r.user?.name || "Unknown"}</td>
                       <td className="px-3 py-3 text-muted-foreground">{r._count.questions}</td>
                       <td className="px-3 py-3 text-muted-foreground">
                         {new Date(r.createdAt).toLocaleDateString()}

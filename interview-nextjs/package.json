@@ -8,6 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@deepgram/sdk": "^5.2.0",
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^5.22.0",
     "@radix-ui/react-accordion": "^1.2.12",
@@ -47,6 +48,7 @@
     "jose": "^6.2.3",
     "lucide-react": "^0.575.0",
     "next": "latest",
+    "nodemailer": "^8.0.7",
     "openai": "^6.37.0",
     "react": "^19.2.0",
     "react-day-picker": "^9.14.0",
@@ -63,6 +65,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.1",
     "@types/node": "^22.16.5",
+    "@types/nodemailer": "^8.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "eslint": "^9.32.0",

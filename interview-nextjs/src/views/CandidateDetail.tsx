@@ -1,11 +1,12 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft, Mail, Phone, MapPin, Briefcase, FileText, Sparkles,
   ShieldCheck, Target, Lightbulb, TrendingUp, Star, MessageSquare,
-  CalendarDays, Send, Download,
+  CalendarDays, Send, Download, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +15,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { PageHeader } from "@/components/PageHeader";
-import { candidateRows } from "@/data/candidates";
+import { toast } from "sonner";
 
 const statusStyle: Record<string, string> = {
   Invited: "bg-info/15 text-info",
@@ -26,9 +27,43 @@ const statusStyle: Record<string, string> = {
 export function CandidateDetail() {
   const params = useParams();
   const id = params?.id as string;
-  const c = candidateRows.find((r) => r.id === id);
+  const [candidate, setCandidate] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
-  if (!c) {
+  useEffect(() => {
+    if (id) {
+      fetchCandidate();
+    }
+  }, [id]);
+
+  const fetchCandidate = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/candidates/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCandidate(data);
+      } else {
+        const error = await res.json();
+        toast.error(error.error || "Failed to load candidate");
+      }
+    } catch (error) {
+      console.error("Error fetching candidate:", error);
+      toast.error("An error occurred while loading candidate");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-[60vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!candidate) {
     return (
       <div className="mx-auto max-w-3xl py-20 text-center">
         <h1 className="text-2xl font-semibold">Candidate not found</h1>
@@ -38,9 +73,63 @@ export function CandidateDetail() {
     );
   }
 
-  const ratings = c.answers.map((a) => a.rating ?? 0).filter((r) => r > 0);
+  const c = candidate;
+  const assignment = c.interviews?.[0];
+  const score = assignment?.score ?? c.score ?? 0;
+  const transcript = assignment?.transcript || [];
+  
+  let parsedFeedback: any = null;
+  try {
+    parsedFeedback = assignment?.feedback ? JSON.parse(assignment.feedback) : null;
+  } catch (e) {
+    parsedFeedback = { summary: assignment?.feedback };
+  }
+
+  const feedback = parsedFeedback?.summary || assignment?.feedback;
+  
+  // Parse transcript for display
+  const qas = [];
+  let currentGroup: any = null;
+
+  if (Array.isArray(transcript)) {
+    for (let i = 0; i < transcript.length; i++) {
+      const msg = transcript[i];
+      if (msg.role === "ai") {
+        if (currentGroup && (msg.score !== undefined && msg.score !== null)) {
+          currentGroup.rating = msg.score;
+        }
+        if (msg.content === "MOVE_NEXT") continue;
+        currentGroup = {
+          question: msg.content,
+          answer: "",
+          rating: msg.score || 0
+        };
+        qas.push(currentGroup);
+      } else if (msg.role === "user" && currentGroup) {
+        currentGroup.answer += (currentGroup.answer ? " " : "") + msg.content;
+      }
+    }
+  }
+
+  const ratings = qas.map(q => q.rating).filter(r => r > 0);
   const avgRating = ratings.length ? (ratings.reduce((s, r) => s + r, 0) / ratings.length).toFixed(1) : "—";
-  const score = c.score ?? 0;
+  
+  const latestInterview = assignment?.interview?.title || "No interview assigned";
+  const displayStatus = assignment?.status || c.status;
+  const scheduledDate = c.createdAt 
+    ? new Date(c.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : "—";
+
+  const getInitials = (name: string) => {
+    if (!name) return "NN";
+    return name
+      .split(" ")
+      .filter(Boolean)
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  };
 
   const tier =
     score >= 80 ? { label: "Excellent", tone: "text-success" }
@@ -54,12 +143,12 @@ export function CandidateDetail() {
     : score > 0 ? "Not a fit at this time"
     : "Awaiting interview completion";
 
-  const strengths = [
+  const strengths = parsedFeedback?.strengths || [
     "Clear, structured communication",
     "Solid grasp of fundamentals",
     score >= 70 ? "Strong technical reasoning" : "Stayed composed under pressure",
   ];
-  const improvements = [
+  const improvements = parsedFeedback?.improvements || [
     "Add concrete metrics & trade-offs",
     "Deepen system-level thinking",
     "Tie answers back to business impact",
@@ -74,10 +163,10 @@ export function CandidateDetail() {
       <PageHeader
         eyebrow="Candidate"
         title={c.name}
-        description={c.role}
+        description={c.role || "Candidate"}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className={`rounded-full ${statusStyle[c.status]} hover:${statusStyle[c.status]}`}>{c.status}</Badge>
+            <Badge className={`rounded-full ${statusStyle[displayStatus]} hover:${statusStyle[displayStatus]}`}>{displayStatus}</Badge>
             <Button size="sm" variant="outline" className="rounded-xl"><Send className="mr-2 h-4 w-4" /> Message</Button>
             <Button size="sm" className="rounded-xl bg-gradient-primary text-white shadow-elegant"><CalendarDays className="mr-2 h-4 w-4" /> Schedule</Button>
           </div>
@@ -90,29 +179,29 @@ export function CandidateDetail() {
             <div className="flex items-center gap-4">
               <Avatar className="h-16 w-16">
                 <AvatarFallback className="bg-gradient-primary text-lg text-white">
-                  {c.name.split(" ").map((n) => n[0]).join("")}
+                  {getInitials(c.name)}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1">
                 <h2 className="text-xl font-semibold">{c.name}</h2>
                 <p className="text-sm text-muted-foreground">{c.role}</p>
               </div>
-              {c.score != null && (
+              {score > 0 && (
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Score</p>
-                  <p className="text-3xl font-semibold tracking-tight">{c.score}</p>
+                  <p className="text-3xl font-semibold tracking-tight">{score}</p>
                 </div>
               )}
             </div>
             <div className="mt-6 grid gap-3 text-sm md:grid-cols-2">
               <div className="flex items-center gap-2"><Mail className="h-4 w-4 text-muted-foreground" /> {c.email}</div>
-              <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted-foreground" /> {c.phone}</div>
-              <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" /> {c.location}</div>
-              <div className="flex items-center gap-2"><Briefcase className="h-4 w-4 text-muted-foreground" /> {c.interview}</div>
+              <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted-foreground" /> {c.phone || "—"}</div>
+              <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" /> {c.location || "—"}</div>
+              <div className="flex items-center gap-2"><Briefcase className="h-4 w-4 text-muted-foreground" /> {latestInterview}</div>
             </div>
           </Card>
 
-          {c.score != null && c.answers.length > 0 && (
+          {score > 0 && (
             <Card className="ai-border rounded-2xl shadow-glow">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
@@ -126,17 +215,12 @@ export function CandidateDetail() {
               <CardContent className="space-y-5 text-sm leading-relaxed">
                 <div className="grid gap-3 sm:grid-cols-3">
                   <Stat icon={Star} label="Avg rating" value={`${avgRating}/10`} />
-                  <Stat icon={MessageSquare} label="Answers" value={`${c.answers.length}`} />
+                  <Stat icon={MessageSquare} label="Answers" value={`${qas.length}`} />
                   <Stat icon={TrendingUp} label="Tier" value={tier.label} valueClass={tier.tone} />
                 </div>
 
                 <p>
-                  Across {c.answers.length} questions, {c.name.split(" ")[0]} demonstrated{" "}
-                  <span className="font-medium">{tier.label.toLowerCase()}</span> performance with an average answer rating of{" "}
-                  <span className="font-medium">{avgRating}/10</span>.
-                  {score >= 80 && " Responses were precise, well-structured, and showed depth in technical reasoning."}
-                  {score < 80 && score >= 60 && " Communication was clear with solid fundamentals; system-level thinking has room to grow."}
-                  {score < 60 && score > 0 && " Foundational knowledge is present, but responses lacked depth in key areas."}
+                  {feedback || `Across ${qas.length} questions, ${c.name.split(" ")[0]} demonstrated ${tier.label.toLowerCase()} performance with an average answer rating of ${avgRating}/10.`}
                 </p>
 
                 <div className="grid gap-4 md:grid-cols-2">
@@ -169,22 +253,29 @@ export function CandidateDetail() {
 
           <Card className="rounded-2xl border-border/60 p-6 shadow-soft">
             <h3 className="mb-4 text-lg font-semibold">Interview answers</h3>
-            {c.answers.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No answers yet — interview not completed.</p>
+            {qas.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No answers available — interview not completed or recorded.</p>
             ) : (
-              <ol className="space-y-4">
-                {c.answers.map((a, i) => (
-                  <li key={i} className="rounded-xl border border-border/60 p-4">
-                    <div className="mb-2 flex items-start justify-between gap-3">
-                      <p className="text-sm font-medium">Q{i + 1}. {a.question}</p>
-                      {a.rating != null && (
-                        <Badge variant="secondary" className="rounded-full">{a.rating}/10</Badge>
-                      )}
+              <div className="space-y-4">
+                {qas.map((a: any, i: number) => (
+                  <div key={i} className="rounded-2xl border border-border/60 bg-card/50 p-4 shadow-sm transition-all hover:shadow-md">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2">
+                        <Badge variant="secondary" className="mt-0.5 rounded-full px-2 py-0 h-5 text-[10px]">Q{i + 1}</Badge>
+                        <p className="text-sm font-semibold leading-tight">{a.question}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 rounded-full bg-ai/10 px-2.5 py-1 text-ai">
+                        <Star className="h-3.5 w-3.5 fill-current" />
+                        <span className="text-xs font-bold">{a.rating}/10</span>
+                      </div>
                     </div>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{a.answer}</p>
-                  </li>
+                    <div className="rounded-xl border border-border/40 bg-muted/30 p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Candidate's answer</p>
+                      <p className="text-sm leading-relaxed text-foreground/90">{a.answer || <span className="italic text-muted-foreground">No answer recorded</span>}</p>
+                    </div>
+                  </div>
                 ))}
-              </ol>
+              </div>
             )}
           </Card>
         </div>
@@ -193,10 +284,10 @@ export function CandidateDetail() {
           <Card className="rounded-2xl border-border/60 p-6 shadow-soft">
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Interview</h3>
             <dl className="space-y-3 text-sm">
-              <div className="flex justify-between"><dt className="text-muted-foreground">Template</dt><dd>{c.interview}</dd></div>
-              <div className="flex justify-between"><dt className="text-muted-foreground">Scheduled</dt><dd>{c.date}</dd></div>
-              <div className="flex justify-between"><dt className="text-muted-foreground">Status</dt><dd>{c.status}</dd></div>
-              <div className="flex justify-between"><dt className="text-muted-foreground">Score</dt><dd>{c.score ?? "—"}</dd></div>
+              <div className="flex justify-between"><dt className="text-muted-foreground">Template</dt><dd>{latestInterview}</dd></div>
+              <div className="flex justify-between"><dt className="text-muted-foreground">Scheduled</dt><dd>{scheduledDate}</dd></div>
+              <div className="flex justify-between"><dt className="text-muted-foreground">Status</dt><dd>{displayStatus}</dd></div>
+              <div className="flex justify-between"><dt className="text-muted-foreground">Score</dt><dd>{score > 0 ? score : "—"}</dd></div>
             </dl>
           </Card>
 
@@ -204,14 +295,22 @@ export function CandidateDetail() {
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Resume</h3>
             <div className="flex items-center gap-3 rounded-xl border border-border/60 p-3">
               <FileText className="h-5 w-5 text-ai" />
-              <div className="flex-1 truncate text-sm">{c.resume}</div>
-              <Button size="sm" variant="outline" className="rounded-lg"><Download className="mr-1 h-3.5 w-3.5" /> Download</Button>
+              <div className="flex-1 truncate text-sm">
+                {c.resume ? c.resume.split('/').pop()?.split('-').slice(2).join('-') : "No resume uploaded"}
+              </div>
+              {c.resume && (
+                <Button asChild size="sm" variant="outline" className="rounded-lg">
+                  <a href={c.resume} download target="_blank" rel="noopener noreferrer">
+                    <Download className="mr-1 h-3.5 w-3.5" /> Download
+                  </a>
+                </Button>
+              )}
             </div>
           </Card>
 
           <Card className="rounded-2xl border-border/60 p-6 shadow-soft">
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Internal notes</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed">{c.notes}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">{c.notes || "No notes added."}</p>
           </Card>
         </div>
       </div>

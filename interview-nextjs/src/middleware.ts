@@ -14,27 +14,58 @@ export async function middleware(request: NextRequest) {
   const isPublicRoute = 
     pathname === "/" || 
     pathname === "/signup" || 
+    pathname === "/auth/set-password" ||
     pathname.startsWith("/api/auth");
 
   // Define routes that should redirect to dashboard if already authenticated
   const isAuthRoute = pathname === "/signup";
 
-  if (!token && !isPublicRoute) {
-    // Redirect to login if not authenticated and trying to access private route
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-
-  if (token && isAuthRoute) {
-    // Redirect to dashboard if already authenticated and trying to access signup
+  if (token) {
     try {
-      await jwtVerify(token, JWT_SECRET);
-      return NextResponse.redirect(new URL("/dashboard", request.url));
+      const { payload } = await jwtVerify(token, JWT_SECRET);
+      const role = payload.role as string;
+
+      // If already authenticated and trying to access auth routes, redirect based on role
+      if (isAuthRoute || pathname === "/") {
+        if (role === "member") {
+          return NextResponse.redirect(new URL("/candidate", request.url));
+        }
+        return NextResponse.redirect(new URL("/dashboard", request.url));
+      }
+
+      // Role-based access control
+      if (role === "member") {
+        // Members should only access /candidate routes and specific API routes
+        const isCandidateRoute = 
+          pathname.startsWith("/candidate") || 
+          pathname.startsWith("/interview") || 
+          pathname.startsWith("/api/candidate");
+          
+        if (!isCandidateRoute && !isPublicRoute && !pathname.startsWith("/api/")) {
+          return NextResponse.redirect(new URL("/candidate", request.url));
+        }
+      } else if (role === "admin") {
+        // Admins should not access /candidate routes (unless specifically allowed)
+        if (pathname.startsWith("/candidate") && !pathname.startsWith("/candidates")) {
+          return NextResponse.redirect(new URL("/dashboard", request.url));
+        }
+      }
     } catch (e) {
-      // Token invalid, clear it and allow public route
+      // Token invalid, clear it and allow public route if it is one, otherwise redirect to login
+      if (!isPublicRoute) {
+        const response = NextResponse.redirect(new URL("/", request.url));
+        response.cookies.delete("auth_token");
+        return response;
+      }
       const response = NextResponse.next();
       response.cookies.delete("auth_token");
       return response;
     }
+  }
+
+  if (!token && !isPublicRoute) {
+    // Redirect to login if not authenticated and trying to access private route
+    return NextResponse.redirect(new URL("/", request.url));
   }
 
   return NextResponse.next();

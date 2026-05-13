@@ -34,7 +34,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         {children}
-        <Toaster />
+        <Toaster duration={2500} closeButton />
       </body>
     </html>
   );

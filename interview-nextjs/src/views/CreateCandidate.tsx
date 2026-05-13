@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Mail, User, Phone, Briefcase, Linkedin, Upload, CalendarDays,
-  Clock, Send, Check, Sparkles, Globe, MapPin,
+  Clock, Send, Check, Sparkles, Globe, MapPin, Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,23 +19,22 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { PageHeader } from "@/components/PageHeader";
+import { toast } from "sonner";
 
-const interviews = [
-  { id: "be-sr", title: "Senior Backend Engineer", duration: "60 min", skills: 8 },
-  { id: "fe-mid", title: "Frontend Mid-Level", duration: "45 min", skills: 6 },
-  { id: "qa", title: "QA Automation", duration: "50 min", skills: 5 },
-  { id: "py-jr", title: "Junior Python Developer", duration: "40 min", skills: 4 },
-  { id: "devops", title: "DevOps SRE", duration: "60 min", skills: 7 },
-];
+interface InterviewTemplate {
+  id: string;
+  title: string;
+  duration: string;
+  questions: any[];
+}
 
 const timezones = [
   "UTC", "Europe/London", "Europe/Berlin", "America/New_York",
   "America/Los_Angeles", "Asia/Karachi", "Asia/Tokyo", "Australia/Sydney",
 ];
 
-const slots = ["09:00", "10:30", "12:00", "14:00", "15:30", "17:00"];
-
 export function CreateCandidate() {
+  const router = useRouter();
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
   const [email, setEmail] = useState("");
@@ -44,18 +44,78 @@ export function CreateCandidate() {
   const [location, setLocation] = useState("");
   const [notes, setNotes] = useState("");
   const [interview, setInterview] = useState<string>("");
+  const [resume, setResume] = useState<File | null>(null);
   const [date, setDate] = useState<string>("");
-  const [slot, setSlot] = useState<string>("");
   const [tz, setTz] = useState("UTC");
-  const [expiry, setExpiry] = useState("7");
   const [sendNow, setSendNow] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
+  const [slot, setSlot] = useState<string>("");
+  const [expiry, setExpiry] = useState("7");
   const [reminders, setReminders] = useState(true);
   const [aiIntro, setAiIntro] = useState(true);
 
   const initials =
     `${first[0] ?? ""}${last[0] ?? ""}`.toUpperCase() || "NN";
   const fullName = `${first} ${last}`.trim() || "New candidate";
-  const selectedInterview = interviews.find((i) => i.id === interview);
+  const slots = ["09:00", "10:30", "12:00", "14:00", "15:30", "17:00"];
+
+  useEffect(() => {
+    async function fetchTemplates() {
+      try {
+        const res = await fetch("/api/interviews");
+        if (res.ok) {
+          const data = await res.json();
+          setTemplates(data.interviews || []);
+        }
+      } catch (error) {
+        console.error("Error fetching templates:", error);
+      }
+    }
+    fetchTemplates();
+  }, []);
+
+  const handleCreate = async () => {
+    if (!first || !email || !interview) {
+      toast.error("Please fill in required fields");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("firstName", first);
+      formData.append("lastName", last);
+      formData.append("email", email);
+      formData.append("phone", phone);
+      formData.append("role", role);
+      formData.append("location", location);
+      formData.append("notes", notes);
+      formData.append("interviewId", interview);
+      if (resume) {
+        formData.append("resume", resume);
+      }
+
+      const res = await fetch("/api/candidates", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.ok) {
+        toast.success("Candidate invited successfully");
+        router.push("/candidates");
+      } else {
+        const error = await res.json();
+        toast.error(error.error || "Failed to invite candidate");
+      }
+    } catch (error) {
+      toast.error("An error occurred");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const selectedInterview = templates.find((i) => i.id === interview);
 
   return (
     <div className="space-y-6">
@@ -71,9 +131,13 @@ export function CreateCandidate() {
         description="Add candidate details and schedule their AI interview in one go."
         actions={
           <>
-            <Button variant="outline" className="rounded-xl">Save as draft</Button>
-            <Button className="rounded-xl bg-gradient-primary text-white shadow-elegant">
-              <Send className="mr-2 h-4 w-4" />
+            <Button variant="outline" className="rounded-xl" disabled={isLoading}>Save as draft</Button>
+            <Button 
+              className="rounded-xl bg-gradient-primary text-white shadow-elegant"
+              onClick={handleCreate}
+              disabled={isLoading}
+            >
+              {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               {sendNow ? "Send invitation" : "Schedule"}
             </Button>
           </>
@@ -117,8 +181,18 @@ export function CreateCandidate() {
                 </Field>
                 <Field label="Resume / CV">
                   <label className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 px-3 text-sm text-muted-foreground hover:bg-muted/50">
-                    <Upload className="h-4 w-4" /> Upload PDF or DOCX
-                    <input type="file" className="hidden" />
+                    <Upload className="h-4 w-4" /> 
+                    {resume ? resume.name : "Upload PDF or DOCX"}
+                    <input 
+                      type="file" 
+                      className="hidden" 
+                      accept=".pdf,.doc,.docx"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) {
+                          setResume(e.target.files[0]);
+                        }
+                      }}
+                    />
                   </label>
                 </Field>
               </div>
@@ -153,35 +227,41 @@ export function CreateCandidate() {
                   Interview template
                 </Label>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  {interviews.map((i) => {
-                    const active = interview === i.id;
-                    return (
-                      <button
-                        key={i.id}
-                        type="button"
-                        onClick={() => setInterview(i.id)}
-                        className={`group rounded-xl border p-3 text-left transition ${
-                          active
-                            ? "border-primary bg-primary/5 shadow-elegant"
-                            : "border-border/70 hover:border-primary/50 hover:bg-muted/40"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <p className="text-sm font-medium">{i.title}</p>
-                          {active && (
-                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                              <Check className="h-3 w-3" />
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-                          <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" /> {i.duration}</span>
-                          <span>·</span>
-                          <span>{i.skills} skills</span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                  {templates.length === 0 ? (
+                    <div className="col-span-2 py-4 text-center text-sm text-muted-foreground">
+                      No interview templates found. Please create one first.
+                    </div>
+                  ) : (
+                    templates.map((i) => {
+                      const active = interview === i.id;
+                      return (
+                        <button
+                          key={i.id}
+                          type="button"
+                          onClick={() => setInterview(i.id)}
+                          className={`group rounded-xl border p-3 text-left transition ${
+                            active
+                              ? "border-primary bg-primary/5 shadow-elegant"
+                              : "border-border/70 hover:border-primary/50 hover:bg-muted/40"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <p className="text-sm font-medium">{i.title}</p>
+                            {active && (
+                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                                <Check className="h-3 w-3" />
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+                            <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" /> {i.duration || "N/A"}</span>
+                            <span>·</span>
+                            <span>{(i as any)._count?.questions || 0} questions</span>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
@@ -197,7 +277,7 @@ export function CreateCandidate() {
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label="Invite expires in">
+                {/* <Field label="Invite expires in">
                   <Select value={expiry} onValueChange={setExpiry}>
                     <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -207,7 +287,7 @@ export function CreateCandidate() {
                       <SelectItem value="30">30 days</SelectItem>
                     </SelectContent>
                   </Select>
-                </Field>
+                </Field> */}
               </div>
 
               <div>
@@ -235,7 +315,7 @@ export function CreateCandidate() {
                 </div>
               </div>
 
-              <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
+              {/* <div className="space-y-3 rounded-xl border border-border/60 bg-muted/30 p-4">
                 <ToggleRow
                   label="Send invitation now"
                   desc="Email the candidate immediately after creation."
@@ -255,7 +335,7 @@ export function CreateCandidate() {
                   onChange={setAiIntro}
                   icon={<Sparkles className="h-3.5 w-3.5 text-ai" />}
                 />
-              </div>
+              </div> */}
             </CardContent>
           </Card>
         </div>

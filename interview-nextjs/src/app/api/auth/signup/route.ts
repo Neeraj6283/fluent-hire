@@ -28,18 +28,29 @@ export async function POST(request: Request) {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role: "admin", // Default role as requested
-      },
+    // Create organization and user in a transaction
+    const result = await prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.create({
+        data: {
+          name: `${name}'s Workspace`,
+        },
+      });
+
+      const user = await tx.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          role: "admin",
+          organizationId: organization.id,
+        },
+      });
+
+      return { user, organization };
     });
 
     // Remove password from response
-    const { password: _, ...userWithoutPassword } = user;
+    const { password: _, ...userWithoutPassword } = result.user;
 
     return NextResponse.json(
       { message: "User created successfully", user: userWithoutPassword },

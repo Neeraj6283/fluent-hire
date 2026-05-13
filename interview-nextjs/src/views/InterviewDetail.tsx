@@ -3,12 +3,20 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Mic, Clock, Layers, Users, FileText, Loader2 } from "lucide-react";
+import { ArrowLeft, Mic, Clock, Layers, Users, FileText, Loader2, Mail, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { PageHeader } from "@/components/PageHeader";
 import { toast } from "sonner";
+
+const statusStyle: Record<string, string> = {
+  Invited: "bg-info/15 text-info",
+  "In Progress": "bg-warning/15 text-warning",
+  Completed: "bg-success/15 text-success",
+  Expired: "bg-destructive/15 text-destructive",
+};
 
 const diffColor: Record<string, string> = {
   Easy: "bg-success/15 text-success",
@@ -23,6 +31,21 @@ type Question = {
   difficulty: string;
 };
 
+type Candidate = {
+  id: string;
+  name: string;
+  email: string;
+  status: string;
+};
+
+type Assignment = {
+  id: string;
+  candidate: Candidate;
+  status: string;
+  score: number | null;
+  createdAt: string;
+};
+
 type Interview = {
   id: string;
   title: string;
@@ -33,6 +56,7 @@ type Interview = {
   description?: string;
   createdAt: string;
   questions: Question[];
+  assignments: Assignment[];
   _count: {
     assignments: number;
   };
@@ -169,12 +193,86 @@ export function InterviewDetail() {
           </Card>
 
           <Card className="rounded-2xl border-border/60 p-6 shadow-soft">
-            <div className="mb-4 flex items-center gap-2">
-              <Users className="h-4 w-4 text-ai" />
-              <h2 className="text-lg font-semibold tracking-tight">Candidates who took this interview</h2>
+            <div className="mb-6 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-ai" />
+                <h2 className="text-lg font-semibold tracking-tight">Candidates ({interview.assignments.length})</h2>
+              </div>
+              <Button asChild variant="ghost" size="sm" className="h-8 rounded-lg text-xs">
+                <Link href="/candidates">View all</Link>
+              </Button>
             </div>
-            <div className="rounded-2xl border border-dashed py-12 text-center">
-               <p className="text-sm text-muted-foreground font-medium">No candidates have taken this interview yet.</p>
+            
+            <div className="overflow-x-auto">
+              {interview.assignments.length > 0 ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                      <th className="pb-4 font-semibold">Candidate</th>
+                      <th className="pb-4 font-semibold">Status</th>
+                      <th className="pb-4 font-semibold">Date</th>
+                      <th className="pb-4 font-semibold">Score</th>
+                      <th className="pb-4 text-right"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40">
+                    {interview.assignments.map((assignment) => (
+                      <tr key={assignment.id} className="group transition hover:bg-muted/30">
+                        <td className="py-4 pr-4">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-9 w-9 border border-border/50">
+                              <AvatarFallback className="bg-gradient-primary text-[11px] font-bold text-white uppercase">
+                                {assignment.candidate.name.split(" ").map(n => n[0]).join("")}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-foreground">{assignment.candidate.name}</p>
+                              <p className="truncate text-[11px] text-muted-foreground">{assignment.candidate.email}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-4 pr-4">
+                          <Badge className={`rounded-full px-2 py-0 text-[10px] font-medium shadow-none border-none ${statusStyle[assignment.status] || "bg-muted text-muted-foreground"}`}>
+                            {assignment.status}
+                          </Badge>
+                        </td>
+                        <td className="py-4 pr-4 text-xs font-medium text-muted-foreground">
+                          {new Date(assignment.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        </td>
+                        <td className="py-4 pr-4">
+                          {assignment.score !== null ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-foreground">{assignment.score}</span>
+                              <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted/60">
+                                <div 
+                                  className="h-full bg-gradient-primary rounded-full" 
+                                  style={{ width: `${assignment.score}%` }} 
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] font-medium text-muted-foreground/60">—</span>
+                          )}
+                        </td>
+                        <td className="py-4 text-right">
+                          <Button asChild variant="ghost" size="icon" className="h-8 w-8 rounded-lg opacity-0 transition group-hover:opacity-100">
+                            <Link href={`/candidates/${assignment.candidate.id}`}>
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </Link>
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="rounded-2xl border border-dashed py-12 text-center">
+                  <p className="text-sm text-muted-foreground font-medium">No candidates have been invited yet.</p>
+                  <Button asChild variant="outline" size="sm" className="mt-4 rounded-xl">
+                    <Link href="/candidates/new">Invite a candidate</Link>
+                  </Button>
+                </div>
+              )}
             </div>
           </Card>
         </div>

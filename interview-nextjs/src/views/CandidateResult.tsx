@@ -1,11 +1,12 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft, Sparkles, Trophy, CheckCircle2, MessageSquare, Star,
   TrendingUp, ShieldCheck, Target, Lightbulb, Share2, Download,
-  LogOut, User, LayoutDashboard, ListChecks,
+  LogOut, User, LayoutDashboard, ListChecks, Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -42,8 +43,48 @@ function loadStored(id: string): StoredResult | null {
 export function CandidateResult() {
   const params = useParams();
   const id = params?.id as string;
-  const stored = loadStored(id);
-  const result = stored ?? completedResults.find((r) => r.id === id);
+  const [result, setResult] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchResult() {
+      try {
+        const res = await fetch(`/api/candidate/me`);
+        if (res.ok) {
+          const data = await res.json();
+          // The ID is the assignment ID
+          const assignment = data.candidate.interviews.find((i: any) => i.id === id);
+          if (assignment) {
+            let parsedFeedback = null;
+            try {
+              parsedFeedback = assignment.feedback ? JSON.parse(assignment.feedback) : null;
+            } catch (e) {
+              console.error("Error parsing feedback:", e);
+              parsedFeedback = { summary: assignment.feedback };
+            }
+
+            setResult({
+              userName: data.user.name,
+              title: assignment.interview.title,
+              date: new Date(assignment.updatedAt).toLocaleDateString(),
+              duration: assignment.interview.duration + "m",
+              score: assignment.score || 0,
+              feedback: parsedFeedback?.summary || assignment.feedback,
+              parsedFeedback: parsedFeedback,
+              answers: assignment.transcript || []
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching result:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchResult();
+  }, [id]);
+
+  if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin" /></div>;
 
   if (!result) {
     return (
@@ -58,9 +99,38 @@ export function CandidateResult() {
     );
   }
 
-  const avgRating = result.answers.length
-    ? (result.answers.reduce((s, a) => s + a.rating, 0) / result.answers.length).toFixed(1)
-    : "—";
+  const qas = [];
+  let currentGroup: any = null;
+
+  for (let i = 0; i < result.answers.length; i++) {
+    const msg = result.answers[i];
+
+    if (msg.role === "ai") {
+      // If we have a current group and it doesn't have a score yet, 
+      // the score on this AI message belongs to that group's answer.
+      if (currentGroup && (msg.score !== undefined && msg.score !== null)) {
+        currentGroup.rating = msg.score;
+      }
+
+      // If this AI message is "MOVE_NEXT", it just finished the previous question topic.
+      if (msg.content === "MOVE_NEXT") {
+        continue;
+      }
+
+      // Start a new group for every AI question (main or follow-up)
+      currentGroup = {
+        question: msg.content,
+        answer: "",
+        rating: 0
+      };
+      qas.push(currentGroup);
+    } else if (msg.role === "user" && currentGroup) {
+      // Append user content to the current question group
+      currentGroup.answer += (currentGroup.answer ? " " : "") + msg.content;
+    }
+  }
+
+  const avgRating = result.score ? (result.score / 10).toFixed(1) : "—";
 
   const tier =
     result.score >= 80 ? { label: "Excellent", tone: "text-success" }
@@ -72,12 +142,12 @@ export function CandidateResult() {
     : result.score >= 60 ? "Consider for next round"
     : "Not a fit at this time";
 
-  const strengths = [
+  const strengths = result.parsedFeedback?.strengths || [
     "Clear, structured communication",
     "Solid grasp of fundamentals",
     result.score >= 70 ? "Strong technical reasoning" : "Stayed composed under pressure",
   ];
-  const improvements = [
+  const improvements = result.parsedFeedback?.improvements || [
     "Add concrete metrics & trade-offs",
     "Deepen system-level thinking",
     "Tie answers back to business impact",
@@ -98,7 +168,7 @@ export function CandidateResult() {
             </div>
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" className="rounded-lg">
-                <User className="mr-2 h-4 w-4" /> Mira Khan
+                <User className="mr-2 h-4 w-4" /> {result.userName || "Candidate"}
               </Button>
               <Button asChild variant="outline" size="sm" className="rounded-lg">
                 <Link href="/"><LogOut className="mr-2 h-4 w-4" /> Sign out</Link>
@@ -146,12 +216,7 @@ export function CandidateResult() {
             </CardHeader>
             <CardContent className="space-y-5 text-sm leading-relaxed">
               <p>
-                Across {result.answers.length} questions, the candidate demonstrated{" "}
-                <span className="font-medium">{tier.label.toLowerCase()}</span> performance with an average answer rating of{" "}
-                <span className="font-medium">{avgRating}/10</span>.
-                {result.score >= 80 && " Responses were precise, well-structured, and showed depth in technical reasoning."}
-                {result.score < 80 && result.score >= 60 && " Communication was clear with solid fundamentals; system-level thinking has room to grow."}
-                {result.score < 60 && " Foundational knowledge is present, but the responses lacked depth and specificity in key areas."}
+                {result.feedback || `Across ${result.answers.length} questions, the candidate demonstrated ${tier.label.toLowerCase()} performance with an average answer rating of ${avgRating}/10.`}
               </p>
               <div className="grid gap-4 md:grid-cols-2">
                 <FeedbackBlock icon={ShieldCheck} title="Strengths" tone="success" items={strengths} />
@@ -186,7 +251,7 @@ export function CandidateResult() {
 
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">Questions & answers</h2>
-          {result.answers.map((a, i) => (
+          {qas.map((a, i) => (
             <Card key={i} className="rounded-2xl border-border/60 shadow-soft">
               <CardContent className="space-y-3 p-5">
                 <div className="flex items-start justify-between gap-3">
@@ -194,9 +259,10 @@ export function CandidateResult() {
                     <Badge variant="secondary" className="mt-0.5 rounded-full">Q{i + 1}</Badge>
                     <p className="font-medium">{a.question}</p>
                   </div>
-                  <Badge className="rounded-full bg-gradient-ai text-white">
-                    <Star className="mr-1 h-3 w-3" /> {a.rating}/10
-                  </Badge>
+                  <div className="flex items-center gap-1.5 rounded-full bg-ai/10 px-3 py-1 text-ai">
+                    <Star className="h-3.5 w-3.5 fill-current" />
+                    <span className="text-xs font-bold">{a.rating}/10</span>
+                  </div>
                 </div>
                 <div className="rounded-xl border bg-muted/30 p-3">
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Your answer</p>

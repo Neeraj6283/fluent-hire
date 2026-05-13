@@ -8,33 +8,39 @@ datasource db {
 }
 
 model Candidate {
-  id        String   @id @default(cuid())
-  name      String
-  email     String   @unique
-  phone     String?
-  role      String?
-  location  String?
-  status    String   @default("Invited")
-  score     Float?
-  resume    String?
-  notes     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String        @id @default(cuid())
+  name           String
+  email          String        @unique
+  phone          String?
+  role           String?
+  location       String?
+  status         String        @default("Invited")
+  score          Float?
+  resume         String?
+  notes          String?
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
-  answers   Answer[]
+  answers    Answer[]
   interviews InterviewAssignment[]
 }
 
 model Interview {
-  id          String   @id @default(cuid())
-  title       String
-  category    String?
-  difficulty  String?
-  status      String   @default("Draft")
-  duration    String?
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String        @id @default(cuid())
+  title          String
+  category       String?
+  difficulty     String?
+  status         String        @default("Draft")
+  duration       String?
+  description    String?
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id])
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   questions   Question[]
   assignments InterviewAssignment[]
@@ -72,6 +78,8 @@ model InterviewAssignment {
   interviewId String
   status      String   @default("Invited")
   score       Float?
+  transcript  Json?    // Stores the full conversation history
+  feedback    String?  // AI generated feedback
   date        DateTime @default(now())
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -83,11 +91,38 @@ model InterviewAssignment {
 }
 
 model User {
+  id             String        @id @default(cuid())
+  name           String
+  email          String        @unique
+  password       String
+  role           String        @default("admin")
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  interviews     Interview[]
+  activities     Activity[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model Organization {
   id        String   @id @default(cuid())
   name      String
-  email     String   @unique
-  password  String
-  role      String   @default("admin")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  users     User[]
+  interviews Interview[]
+  candidates Candidate[]
+  activities Activity[]
+}
+
+model Activity {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  type           String   // e.g., "candidate_invited", "interview_completed", "interview_created"
+  description    String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

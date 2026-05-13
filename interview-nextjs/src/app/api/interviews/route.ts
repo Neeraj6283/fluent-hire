@@ -1,10 +1,36 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAuthUser } from "@/lib/auth";
+import { logActivity } from "@/lib/activity";
 
 export async function GET() {
   try {
-    const interviews = await prisma.interview.findMany({
+    const user = await getAuthUser();
+    
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Fallback for organizationId if not in token
+    let orgId = (user as any).organizationId;
+    if (!orgId) {
+      const dbUser = await (prisma.user as any).findUnique({
+        where: { id: (user as any).userId },
+        select: { organizationId: true }
+      });
+      orgId = (dbUser as any)?.organizationId || null;
+    }
+
+    const interviews = await (prisma.interview as any).findMany({
+      where: {
+        organizationId: orgId,
+      },
       include: {
+        user: {
+          select: {
+            name: true,
+          },
+        },
         _count: {
           select: { questions: true },
         },
@@ -26,19 +52,37 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const user = await getAuthUser();
+    
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Fallback for organizationId if not in token
+    let orgId = (user as any).organizationId;
+    if (!orgId) {
+      const dbUser = await (prisma.user as any).findUnique({
+        where: { id: (user as any).userId },
+        select: { organizationId: true }
+      });
+      orgId = (dbUser as any)?.organizationId || null;
+    }
+
     const { title, category, difficulty, duration, status, questions } = await request.json();
 
     if (!title || !questions || !Array.isArray(questions)) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    const interview = await prisma.interview.create({
+    const interview = await (prisma.interview as any).create({
       data: {
         title,
         category,
         difficulty,
         duration: String(duration),
         status, // "Public" or "Draft"
+        userId: (user as any).userId,
+        organizationId: orgId,
         questions: {
           create: questions.map((q: any) => ({
             skill: q.skill,
@@ -51,6 +95,9 @@ export async function POST(request: Request) {
         questions: true,
       },
     });
+
+    // Log Activity
+    await logActivity(orgId, (user as any).userId, "interview_created", `Created new interview: ${title}`);
 
     return NextResponse.json({ interview });
   } catch (error: any) {

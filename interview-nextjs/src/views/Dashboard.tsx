@@ -13,6 +13,7 @@ import {
   PlayCircle,
   UserPlus,
   Zap,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,8 @@ function Sparkline({ data }: { data: number[] }) {
 
 export function Dashboard() {
   const [userName, setUserName] = useState("Jordan");
+  const [stats, setStats] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const storedUser = localStorage.getItem("voxa_user");
@@ -63,7 +66,29 @@ export function Dashboard() {
         setUserName(user.name.split(" ")[0]);
       }
     }
+    fetchStats();
   }, []);
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch("/api/dashboard/stats");
+      if (res.ok) {
+        const data = await res.json();
+        setStats(data);
+      }
+    } catch (error) {
+      console.error("Error fetching dashboard stats:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const dashboardKpis = [
+    { label: "Total Interviews", value: stats?.kpis?.totalInterviews ?? "0", icon: Mic },
+    { label: "Total Candidates", value: stats?.kpis?.totalCandidates ?? "0", icon: Users },
+    { label: "Completed", value: stats?.kpis?.completedInterviews ?? "0", icon: CheckCircle2 },
+    { label: "Average Score", value: stats?.kpis?.averageScore ?? "0.0", icon: Gauge },
+  ];
 
   return (
     <div className="space-y-8">
@@ -86,7 +111,7 @@ export function Dashboard() {
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {kpis.map((k) => (
+        {dashboardKpis.map((k) => (
           <Card key={k.label} className="group relative overflow-hidden rounded-2xl border-border/60 shadow-soft transition hover:shadow-elegant">
             <div className="absolute inset-0 -z-10 bg-gradient-glow opacity-0 transition-opacity group-hover:opacity-100" />
             <CardContent className="p-5">
@@ -94,15 +119,13 @@ export function Dashboard() {
                 <div className="grid h-9 w-9 place-items-center rounded-xl bg-accent text-accent-foreground">
                   <k.icon className="h-4 w-4" />
                 </div>
-                <Badge variant="secondary" className="gap-1 rounded-full text-[10px] font-medium text-success">
-                  <TrendingUp className="h-3 w-3" /> {k.delta}
-                </Badge>
               </div>
               <div className="mt-4">
                 <p className="text-xs text-muted-foreground">{k.label}</p>
-                <p className="mt-1 text-2xl font-semibold tracking-tight">{k.value}</p>
+                <p className="mt-1 text-2xl font-semibold tracking-tight">
+                  {isLoading ? <Loader2 className="h-5 w-5 animate-spin opacity-20" /> : k.value}
+                </p>
               </div>
-              <div className="mt-3"><Sparkline data={k.spark} /></div>
             </CardContent>
           </Card>
         ))}
@@ -113,7 +136,7 @@ export function Dashboard() {
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
               <CardTitle className="text-base">Interview activity</CardTitle>
-              <p className="mt-0.5 text-xs text-muted-foreground">Last 30 days</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Last 14 days</p>
             </div>
             <div className="flex gap-1.5 text-[11px]">
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-primary" />Started</span>
@@ -121,7 +144,11 @@ export function Dashboard() {
             </div>
           </CardHeader>
           <CardContent>
-            <ActivityChart />
+            {isLoading ? (
+              <div className="flex h-56 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+            ) : (
+              <ActivityChart data={stats?.chart} />
+            )}
           </CardContent>
         </Card>
 
@@ -175,25 +202,30 @@ export function Dashboard() {
             <CardTitle className="text-base">Completion rate</CardTitle>
           </CardHeader>
           <CardContent className="flex items-center justify-center pb-8">
-            <Donut value={71} />
+            {isLoading ? (
+              <div className="h-44 w-44 rounded-full border-4 border-muted animate-pulse" />
+            ) : (
+              <Donut value={stats?.completionRate ?? 0} />
+            )}
           </CardContent>
         </Card>
 
         <Card className="rounded-2xl border-border/60 shadow-soft">
           <CardHeader>
-            <CardTitle className="text-base">Score distribution</CardTitle>
+            <CardTitle className="text-base">Overall Progress</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex h-40 items-end gap-2">
-              {[34, 52, 78, 96, 88, 72, 48, 30].map((v, i) => (
-                <div key={i} className="flex flex-1 flex-col items-center gap-1.5">
-                  <div
-                    className="w-full rounded-t-md bg-gradient-to-t from-primary/70 to-ai"
-                    style={{ height: `${v}%` }}
-                  />
-                  <span className="text-[10px] text-muted-foreground">{i * 10}+</span>
+            <div className="flex h-40 items-center justify-center">
+              <div className="text-center">
+                <div className="relative inline-flex items-center justify-center">
+                  <svg className="h-32 w-32 rotate-[-90deg]">
+                    <circle cx="64" cy="64" r="58" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-muted/20" />
+                    <circle cx="64" cy="64" r="58" stroke="currentColor" strokeWidth="8" fill="transparent" strokeDasharray={364} strokeDashoffset={364 - (364 * (stats?.completionRate ?? 0)) / 100} className="text-ai transition-all duration-1000" strokeLinecap="round" />
+                  </svg>
+                  <span className="absolute text-2xl font-bold">{stats?.completionRate ?? 0}%</span>
                 </div>
-              ))}
+                <p className="mt-4 text-xs text-muted-foreground">Candidates completed the journey</p>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -203,25 +235,48 @@ export function Dashboard() {
             <CardTitle className="text-base">Recent activity</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-3">
-              {[
-                { who: "Mira K.", what: "completed Senior Backend", when: "2m ago", color: "bg-success" },
-                { who: "Tariq A.", what: "started QA Automation", when: "12m ago", color: "bg-info" },
-                { who: "Lin Y.", what: "invited to Frontend Mid", when: "1h ago", color: "bg-primary" },
-                { who: "Nora P.", what: "report ready", when: "3h ago", color: "bg-ai" },
-              ].map((a, i) => (
-                <li key={i} className="flex items-start gap-3">
-                  <span className={`mt-1.5 h-2 w-2 rounded-full ${a.color}`} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm">
-                      <span className="font-medium">{a.who}</span>{" "}
-                      <span className="text-muted-foreground">{a.what}</span>
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">{a.when}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            {isLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3, 4].map(i => <div key={i} className="h-10 w-full bg-muted animate-pulse rounded-lg" />)}
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                {(stats?.recentActivity || []).map((a: any, i: number) => {
+                  const typeColors: Record<string, string> = {
+                    interview_completed: 'bg-success',
+                    interview_created: 'bg-ai',
+                    candidate_created: 'bg-primary',
+                    interview_scheduled: 'bg-info',
+                  };
+                  
+                  // Helper to format time relative to now (simple version)
+                  const formatTime = (date: Date) => {
+                    const now = new Date();
+                    const diff = Math.floor((now.getTime() - new Date(date).getTime()) / 1000);
+                    if (diff < 60) return `${diff}s ago`;
+                    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+                    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+                    return new Date(date).toLocaleDateString();
+                  };
+
+                  return (
+                    <li key={i} className="flex items-start gap-3">
+                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${typeColors[a.type] || 'bg-primary'}`} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm leading-tight">
+                          <span className="font-semibold text-foreground">{a.user?.name || "System"}</span>{" "}
+                          <span className="text-muted-foreground">{a.description}</span>
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground/70">{formatTime(a.createdAt)}</p>
+                      </div>
+                    </li>
+                  );
+                })}
+                {(!stats?.recentActivity || stats.recentActivity.length === 0) && (
+                  <p className="text-sm text-muted-foreground italic text-center py-4">No recent activity found. Try creating an interview or inviting a candidate.</p>
+                )}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -229,12 +284,12 @@ export function Dashboard() {
   );
 }
 
-function ActivityChart() {
-  const a = [12, 18, 14, 22, 19, 26, 30, 28, 34, 31, 38, 42, 39, 45];
-  const b = [6, 10, 9, 14, 12, 18, 22, 20, 26, 24, 29, 33, 30, 36];
-  const max = Math.max(...a);
-  const toPath = (data: number[]) =>
-    data.map((v, i) => `${(i / (data.length - 1)) * 100},${100 - (v / max) * 90}`).join(" ");
+function ActivityChart({ data }: { data: any }) {
+  const a = data?.started || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const b = data?.completed || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const max = Math.max(...a, ...b, 5);
+  const toPath = (points: number[]) =>
+    points.map((v, i) => `${(i / (points.length - 1)) * 100},${100 - (v / max) * 90}`).join(" ");
 
   return (
     <svg viewBox="0 0 100 110" className="h-56 w-full" preserveAspectRatio="none">

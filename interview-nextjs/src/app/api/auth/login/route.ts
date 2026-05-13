@@ -45,7 +45,8 @@ export async function POST(request: Request) {
       userId: user.id, 
       email: user.email,
       name: user.name,
-      role: user.role 
+      role: user.role,
+      organizationId: (user as any).organizationId
     })
       .setProtectedHeader({ alg: "HS256" })
       .setExpirationTime("24h")
@@ -55,7 +56,13 @@ export async function POST(request: Request) {
     const response = NextResponse.json(
       { 
         message: "Login successful",
-        user: { id: user.id, name: user.name, email: user.email, role: user.role }
+        user: { 
+          id: user.id, 
+          name: user.name, 
+          email: user.email, 
+          role: user.role,
+          organizationId: (user as any).organizationId
+        }
       },
       { status: 200 }
     );

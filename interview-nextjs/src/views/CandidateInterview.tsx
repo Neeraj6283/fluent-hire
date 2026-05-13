@@ -1,196 +1,387 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Mic, MicOff, X, ArrowRight, Sparkles, Volume2, Shield, Clock } from "lucide-react";
+import { Mic, MicOff, Sparkles, Volume2, Shield, Clock, Loader2, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { interviewQuestions, assignedInterviews } from "@/data/candidatePortal";
+import { toast } from "sonner";
 
-const QUESTION_SECONDS = 60;
+const SILENCE_TIMEOUT = 5000; // 5 seconds silence timeout
 
-type Answer = { question: string; answer: string; rating: number };
+type Message = { role: "ai" | "user"; content: string };
 
 export function CandidateInterview() {
   const params = useParams();
   const id = params?.id as string;
   const router = useRouter();
-  const meta = assignedInterviews.find((i) => i.id === id);
-  const QUESTIONS = interviewQuestions[id] ?? interviewQuestions["senior-backend"];
 
+  const [interview, setInterview] = useState<any>(null);
+  const [questions, setQuestions] = useState<any[]>([]);
   const [started, setStarted] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [idx, setIdx] = useState(0);
+  const [followUpCount, setFollowUpCount] = useState(0);
   const [phase, setPhase] = useState<"speaking" | "listening" | "processing">("speaking");
   const [elapsed, setElapsed] = useState(0);
-  const [questionTime, setQuestionTime] = useState(0);
   const [transcript, setTranscript] = useState("");
-  const [interim, setInterim] = useState("");
-  const [answers, setAnswers] = useState<Answer[]>([]);
+  const [history, setHistory] = useState<Message[]>([]);
   const [muted, setMuted] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
 
-  const recognitionRef = useRef<any>(null);
-  const finalsRef = useRef<string>("");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const totalSilenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const currentTranscriptRef = useRef("");
+  
+  // Refs for stale closure prevention
+  const idxRef = useRef(0);
+  const historyRef = useRef<Message[]>([]);
+  const followUpCountRef = useRef(0);
+
+  // Sync refs with state
+  useEffect(() => { idxRef.current = idx; }, [idx]);
+  useEffect(() => { historyRef.current = history; }, [history]);
+  useEffect(() => { followUpCountRef.current = followUpCount; }, [followUpCount]);
+
+  // Load interview data
+  useEffect(() => {
+    async function fetchInterview() {
+      try {
+        const res = await fetch(`/api/candidate/me`);
+        if (res.ok) {
+          const data = await res.json();
+          const assignment = data.candidate.interviews.find((i: any) => i.interview.id === id);
+          if (assignment) {
+            setInterview(assignment);
+            setQuestions(assignment.interview.questions);
+          } else {
+            toast.error("Interview assignment not found");
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching interview:", error);
+        toast.error("Failed to load interview");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchInterview();
+  }, [id]);
 
   // total elapsed timer
   useEffect(() => {
-    if (!started) return;
-    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
-    return () => clearInterval(t);
-  }, [started]);
-
-  // per-question timer + auto advance
-  useEffect(() => {
-    if (!started) return;
-    setQuestionTime(0);
+    if (!started || isFinishing) return;
     const t = setInterval(() => {
-      setQuestionTime((s) => {
-        if (s + 1 >= QUESTION_SECONDS) {
+      setElapsed((s) => {
+        const durationLimit = parseInt(interview?.interview?.duration || "30") * 60;
+        if (s >= durationLimit) {
           clearInterval(t);
-          handleNext();
-          return QUESTION_SECONDS;
+          handleTimeFinish();
+          return s;
         }
         return s + 1;
       });
     }, 1000);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idx, started]);
+  }, [started, interview, isFinishing]);
 
-  // AI "speaking" → "listening" transition + speech recognition lifecycle
+  // Cleanup on unmount
   useEffect(() => {
-    if (!started) return;
-    setPhase("speaking");
-    setTranscript("");
-    setInterim("");
-    finalsRef.current = "";
-
-    // Try browser TTS
-    try {
-      const utt = new SpeechSynthesisUtterance(QUESTIONS[idx]);
-      utt.rate = 1;
-      utt.pitch = 1;
-      window.speechSynthesis?.cancel();
-      window.speechSynthesis?.speak(utt);
-    } catch {}
-
-    const speakTimer = setTimeout(() => {
-      setPhase("listening");
-      startRecognition();
-    }, 2000);
-
     return () => {
-      clearTimeout(speakTimer);
-      stopRecognition();
-      try { window.speechSynthesis?.cancel(); } catch {}
+      stopSTT();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idx, started]);
+  }, []);
 
-  const startRecognition = () => {
-    if (muted) return;
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return; // unsupported, transcript stays empty
+  // Initialize Deepgram STT
+  const startSTT = async () => {
+    if (muted || isFinishing) return;
     try {
-      const rec = new SR();
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.lang = "en-US";
-      rec.onresult = (e: any) => {
-        let interimText = "";
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const res = e.results[i];
-          if (res.isFinal) {
-            finalsRef.current += res[0].transcript + " ";
-          } else {
-            interimText += res[0].transcript;
-          }
-        }
-        setTranscript(finalsRef.current.trim());
-        setInterim(interimText);
+      const response = await fetch("/api/deepgram");
+      const { key } = await response.json();
+      
+      const socket = new WebSocket("wss://api.deepgram.com/v1/listen?model=nova-2&language=en-IN&smart_format=true", [
+        "token",
+        key,
+      ]);
+
+      socket.onopen = () => {
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+          const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+          mediaRecorder.addEventListener("dataavailable", (event) => {
+            if (event.data.size > 0 && socket.readyState === 1) {
+              socket.send(event.data);
+            }
+          });
+          mediaRecorder.start(250);
+          mediaRecorderRef.current = mediaRecorder;
+        });
       };
-      rec.onerror = () => {};
-      rec.onend = () => {
-        if (phase === "listening" && !muted) {
-          try { rec.start(); } catch {}
+
+      socket.onmessage = (message) => {
+        const received = JSON.parse(message.data);
+        if (!received.channel) return;
+        const transcriptText = received.channel.alternatives[0].transcript;
+        
+        if (transcriptText && received.is_final) {
+          currentTranscriptRef.current += " " + transcriptText;
+          setTranscript(currentTranscriptRef.current.trim());
+          resetSilenceTimer();
         }
       };
-      rec.start();
-      recognitionRef.current = rec;
-    } catch {}
+
+      socketRef.current = socket;
+    } catch (error) {
+      console.error("STT Error:", error);
+    }
   };
 
-  const stopRecognition = () => {
+  const stopSTT = () => {
+    socketRef.current?.close();
+    mediaRecorderRef.current?.stop();
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (totalSilenceTimerRef.current) clearTimeout(totalSilenceTimerRef.current);
+  };
+
+  const startTotalSilenceTimer = () => {
+    if (totalSilenceTimerRef.current) clearTimeout(totalSilenceTimerRef.current);
+    totalSilenceTimerRef.current = setTimeout(() => {
+      if (phase === "listening") {
+        console.log("Total silence detected for 5 seconds. Auto-submitting empty answer.");
+        handleTurn();
+      }
+    }, 5000); // 5 seconds total silence
+  };
+
+  const resetSilenceTimer = () => {
+    if (totalSilenceTimerRef.current) clearTimeout(totalSilenceTimerRef.current); // Stop total silence if user starts talking
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    silenceTimerRef.current = setTimeout(() => {
+      if (currentTranscriptRef.current.trim().length > 0) {
+        handleTurn();
+      }
+    }, SILENCE_TIMEOUT);
+  };
+
+  const speakText = async (text: string) => {
+    if (isFinishing && text !== "Your time is finished, please check the result.") return;
+    setPhase("speaking");
+    
+    // Cleanup previous audio if any
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
     try {
-      recognitionRef.current?.stop();
-    } catch {}
-    recognitionRef.current = null;
+      const response = await fetch("/api/interview/speak", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text }),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Deepgram TTS API Error:", response.status, errorText);
+        throw new Error(`Deepgram TTS failed: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      if (blob.size === 0) throw new Error("Received empty audio blob");
+
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio();
+      
+      // Handle audio loading errors
+      audio.onerror = (e) => {
+        console.error("Audio element error:", e);
+        URL.revokeObjectURL(url);
+        fallbackToBrowserTTS(text);
+      };
+
+      audio.src = url;
+      audioRef.current = audio;
+      
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        if (!isFinishing) {
+          setTimeout(() => {
+            setPhase("listening");
+            currentTranscriptRef.current = "";
+            setTranscript("");
+            startSTT();
+            startTotalSilenceTimer();
+          }, 500);
+        }
+      };
+
+      await audio.play();
+    } catch (error) {
+      console.error("TTS Error:", error);
+      fallbackToBrowserTTS(text);
+    }
   };
 
-  const toggleMute = () => {
-    setMuted((m) => {
-      const next = !m;
-      if (next) stopRecognition();
-      else if (phase === "listening") startRecognition();
-      return next;
-    });
+  const fallbackToBrowserTTS = (text: string) => {
+    console.log("Falling back to browser SpeechSynthesis");
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.onend = () => {
+      if (!isFinishing) {
+        setTimeout(() => {
+          setPhase("listening");
+          currentTranscriptRef.current = "";
+          setTranscript("");
+          startSTT();
+          startTotalSilenceTimer();
+        }, 500);
+      }
+    };
+    window.speechSynthesis.speak(utt);
   };
 
-  const handleNext = () => {
-    const finalAnswer = (finalsRef.current + interim).trim();
-    const rating = Math.max(5, Math.min(10, 6 + Math.floor(finalAnswer.length / 80)));
-    const newAns: Answer = { question: QUESTIONS[idx], answer: finalAnswer, rating };
-    const updated = [...answers, newAns];
-    setAnswers(updated);
-    stopRecognition();
+  const handleTurn = async () => {
+    const userMsg = currentTranscriptRef.current.trim();
+    if (!userMsg || isFinishing) return;
+
+    // Use refs to get latest values in the closure
+    const currentIdx = idxRef.current;
+    const currentHistory = historyRef.current;
+    const currentFollowUpCount = followUpCountRef.current;
+
+    stopSTT();
     setPhase("processing");
 
-    setTimeout(() => {
-      if (idx + 1 >= QUESTIONS.length) {
-        finishInterview(updated);
-      } else {
-        setIdx((i) => i + 1);
-      }
-    }, 700);
-  };
+    // Artificial "thinking" delay to make it feel more natural
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
-  const handleEnd = () => {
-    const finalAnswer = (finalsRef.current + interim).trim();
-    const updated = finalAnswer
-      ? [...answers, { question: QUESTIONS[idx], answer: finalAnswer, rating: 6 }]
-      : answers;
-    finishInterview(updated);
-  };
+    const updatedHistory: Message[] = [...currentHistory, { role: "user", content: userMsg }];
+    setHistory(updatedHistory);
+    
+    console.log("Processing Turn:", { currentIdx, currentFollowUpCount, userMsg });
 
-  const finishInterview = (all: Answer[]) => {
-    stopRecognition();
-    const score =
-      all.length === 0
-        ? 0
-        : Math.round(all.reduce((s, a) => s + a.rating, 0) / all.length * 10);
-    const resultId = `live-${id}-${Date.now()}`;
-    const mm = Math.floor(elapsed / 60);
-    const ss = elapsed % 60;
-    const result = {
-      id: resultId,
-      interviewId: id,
-      title: meta?.title ?? "Interview",
-      date: new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
-      score,
-      duration: `${mm}m ${ss}s`,
-      answers: all,
-    };
     try {
-      sessionStorage.setItem(`voxa-result-${resultId}`, JSON.stringify(result));
-    } catch {}
-    router.push(`/candidate/result/${resultId}`);
+      const res = await fetch("/api/interview/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          history: updatedHistory,
+          question: questions[currentIdx].question,
+          answer: userMsg,
+          followUpCount: currentFollowUpCount,
+        }),
+      });
+
+      const { aiResponse, score } = await res.json();
+      console.log("AI Response from Process API:", { aiResponse, score });
+
+      // FORCE progression if currentFollowUpCount is already 2 OR AI says MOVE_NEXT
+      if (aiResponse.includes("MOVE_NEXT") || currentFollowUpCount >= 2) {
+        if (currentIdx + 1 < questions.length) {
+          const nextIdx = currentIdx + 1;
+          setIdx(nextIdx);
+          setFollowUpCount(0);
+          const nextQ = questions[nextIdx].question;
+          const newHistory: any[] = [...updatedHistory, { role: "ai", content: nextQ, score: score }];
+          setHistory(newHistory);
+          speakText(nextQ);
+        } else {
+          const finalHistory: any[] = [...updatedHistory, { role: "ai", content: "MOVE_NEXT", score: score }];
+          finishInterview(finalHistory);
+        }
+      } else {
+        // AI asks a follow-up
+        const nextFollowUpCount = currentFollowUpCount + 1;
+        setFollowUpCount(nextFollowUpCount);
+        const newHistory: any[] = [...updatedHistory, { role: "ai", content: aiResponse, score: score }];
+        setHistory(newHistory);
+        speakText(aiResponse);
+      }
+    } catch (error) {
+      console.error("Turn Error:", error);
+      if (currentIdx + 1 < questions.length) {
+        const nextIdx = currentIdx + 1;
+        const nextQ = questions[nextIdx].question;
+        setIdx(nextIdx);
+        setFollowUpCount(0);
+        setHistory([...updatedHistory, { role: "ai", content: nextQ }]);
+        speakText(nextQ);
+      } else {
+        finishInterview(updatedHistory);
+      }
+    }
   };
 
-  if (!started) return <StartScreen onStart={() => setStarted(true)} title={meta?.title} company={meta?.company} count={QUESTIONS.length} />;
+  const handleTimeFinish = async () => {
+    if (isFinishing) return;
+    setIsFinishing(true);
+    stopSTT();
+    const finalMsg = "Your time is finished, please check the result.";
+    speakText(finalMsg);
+    setTimeout(() => finishInterview(historyRef.current), 5000);
+  };
 
-  const total = QUESTIONS.length;
+  const finishInterview = async (finalHistory: Message[]) => {
+    setIsFinishing(true);
+    stopSTT();
+    console.log("Finishing Interview with History:", finalHistory);
+    try {
+      const res = await fetch("/api/interview/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignmentId: interview.id,
+          history: finalHistory,
+        }),
+      });
+
+      if (res.ok) {
+        router.push(`/candidate/result/${interview.id}`);
+      }
+    } catch (error) {
+      console.error("Finish Error:", error);
+      toast.error("Failed to save results");
+    }
+  };
+
+  const startInterview = () => {
+    setStarted(true);
+    const firstQ = questions[0].question;
+    setHistory([{ role: "ai", content: firstQ }]);
+    speakText(firstQ);
+  };
+
+  if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
+
+  if (!interview || !questions || questions.length === 0) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-background px-6">
+        <div className="text-center">
+          <h1 className="text-xl font-semibold">Interview not available</h1>
+          <p className="mt-2 text-sm text-muted-foreground">This interview has no questions or is not assigned to you.</p>
+          <Button asChild className="mt-6 rounded-xl">
+            <Link href="/candidate">Back to dashboard</Link>
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!started) return <StartScreen onStart={startInterview} title={interview?.interview?.title} company={interview?.interview?.organization?.name} count={questions.length} />;
+
+  const total = questions.length;
+  const durationLimit = parseInt(interview?.interview?.duration || "30") * 60;
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
-  const remaining = QUESTION_SECONDS - questionTime;
+  const remaining = Math.max(0, durationLimit - elapsed);
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-background">
@@ -203,29 +394,23 @@ export function CandidateInterview() {
             <Sparkles className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-sm font-semibold">{meta?.title ?? "Interview"}</p>
-            <p className="text-[11px] text-muted-foreground">{meta?.company ?? "Voxa AI"}</p>
+            <p className="text-sm font-semibold">{interview?.interview?.title ?? "Interview"}</p>
+            <p className="text-[11px] text-muted-foreground">{interview?.interview?.organization?.name ?? "Voxa AI"}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <Badge variant="secondary" className="rounded-full">
             <span className="mr-1.5 h-1.5 w-1.5 animate-pulse rounded-full bg-destructive" /> REC {mm}:{ss}
           </Badge>
-          <Badge variant="secondary" className="rounded-full">Q {idx + 1} / {total}</Badge>
-          <Badge className={`rounded-full ${remaining <= 10 ? "bg-destructive text-white" : "bg-ai text-white"}`}>
-            <Clock className="mr-1 h-3 w-3" /> {remaining}s
+          <Badge variant="secondary" className="rounded-full">Question {idx + 1} / {total}</Badge>
+          <Badge className={`rounded-full ${remaining <= 60 ? "bg-destructive text-white" : "bg-ai text-white"}`}>
+            <Clock className="mr-1 h-3 w-3" /> {Math.floor(remaining / 60)}:{(remaining % 60).toString().padStart(2, "0")}
           </Badge>
-          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={handleEnd}>
-            <X className="h-4 w-4" />
-          </Button>
         </div>
       </header>
 
       <div className="relative z-10 h-1 w-full bg-muted">
         <div className="h-full bg-gradient-ai transition-all" style={{ width: `${((idx + 1) / total) * 100}%` }} />
-      </div>
-      <div className="relative z-10 h-0.5 w-full bg-muted/50">
-        <div className="h-full bg-ai transition-all" style={{ width: `${(questionTime / QUESTION_SECONDS) * 100}%` }} />
       </div>
 
       <main className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col items-center px-6 py-8 text-center">
@@ -256,21 +441,17 @@ export function CandidateInterview() {
         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-ai">
           {phase === "speaking" ? "AI is speaking" : phase === "listening" ? "Listening to you" : "Processing your answer"}
         </p>
-
         <h1 className="mt-3 max-w-2xl text-xl font-semibold leading-snug tracking-tight md:text-2xl">
-          {QUESTIONS[idx]}
+          {[...history].reverse().find(m => m.role === "ai")?.content || questions[0].question}
         </h1>
 
-        {/* Live transcript */}
         <div className="mt-6 w-full max-w-2xl rounded-2xl border bg-background/70 p-4 text-left shadow-soft backdrop-blur">
           <div className="flex items-center justify-between">
             <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Your answer (live transcript)</p>
             {muted && <Badge variant="secondary" className="rounded-full text-[10px] text-destructive">Muted</Badge>}
           </div>
           <div className="mt-2 min-h-[80px] text-sm leading-relaxed">
-            {transcript ? <span>{transcript} </span> : null}
-            {interim ? <span className="text-muted-foreground">{interim}</span> : null}
-            {!transcript && !interim && (
+            {transcript ? <span>{transcript}</span> : (
               <span className="text-muted-foreground italic">
                 {phase === "listening" ? "Speak now — your words will appear here…" : "Waiting for the question to finish…"}
               </span>
@@ -279,25 +460,25 @@ export function CandidateInterview() {
         </div>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-          <Button variant="outline" size="lg" className="h-12 rounded-2xl" onClick={toggleMute}>
+          <Button variant="outline" size="lg" className="h-12 rounded-2xl" onClick={() => setMuted(!muted)}>
             {muted ? <Mic className="mr-2 h-4 w-4" /> : <MicOff className="mr-2 h-4 w-4" />}
             {muted ? "Unmute" : "Mute"}
           </Button>
           <Button
             size="lg"
-            onClick={handleNext}
-            className="h-12 rounded-2xl bg-gradient-primary px-6 text-white shadow-elegant"
+            variant="outline"
+            className="h-12 rounded-2xl text-destructive"
+            onClick={() => finishInterview(history)}
+            disabled={isFinishing}
           >
-            {idx === total - 1 ? "Finish & see results" : "Next question"} <ArrowRight className="ml-2 h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="lg" className="h-12 rounded-2xl text-destructive" onClick={handleEnd}>
+            {isFinishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             End interview
           </Button>
         </div>
       </main>
 
       <footer className="relative z-10 flex items-center justify-center gap-2 border-t bg-background/60 px-6 py-3 text-[11px] text-muted-foreground backdrop-blur-xl">
-        <Shield className="h-3 w-3" /> End-to-end encrypted · Each question auto-advances after {QUESTION_SECONDS} seconds
+        <Shield className="h-3 w-3" /> AI Interview Mode · Follow-ups enabled · Silence detection active
       </footer>
     </div>
   );
@@ -317,20 +498,20 @@ function StartScreen({ onStart, title, company, count }: { onStart: () => void; 
             </div>
             <div>
               <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{company ?? "Acme Corp"}</p>
-              <p className="text-sm font-semibold">{title ?? "Senior Backend Engineer"}</p>
+              <p className="text-sm font-semibold">{title ?? "Technical Interview"}</p>
             </div>
           </div>
 
           <h1 className="mt-6 text-2xl font-semibold tracking-tight">Ready to begin your AI interview?</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            {count} questions · voice-only · each question auto-advances after {QUESTION_SECONDS}s.
+            {count} questions · voice-only · AI will ask follow-up questions if needed.
           </p>
 
           <ul className="mt-6 space-y-3 text-sm">
             {[
-              "Find a quiet, well-lit place",
-              "Use headphones for best audio quality",
-              "Speak naturally — your transcript appears live on screen",
+              "Find a quiet place",
+              "Speak naturally — silence for 5s will submit your answer",
+              "AI will ask follow-up questions for better evaluation",
             ].map((t) => (
               <li key={t} className="flex items-start gap-2">
                 <span className="mt-1 h-1.5 w-1.5 rounded-full bg-ai" /> {t}
@@ -338,27 +519,9 @@ function StartScreen({ onStart, title, company, count }: { onStart: () => void; 
             ))}
           </ul>
 
-          <div className="mt-6 rounded-2xl border bg-muted/40 p-4">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-sm">
-                <Mic className="h-4 w-4 text-ai" /> Microphone test
-              </span>
-              <Badge variant="secondary" className="rounded-full text-success bg-success/15">Ready</Badge>
-            </div>
-            <div className="mt-3 flex h-6 items-center gap-1">
-              {Array.from({ length: 24 }).map((_, i) => (
-                <span key={i} className="wave-bar flex-1 rounded-full bg-gradient-ai"
-                      style={{ height: `${30 + (i % 5) * 14}%`, animationDelay: `${i * 0.05}s` }} />
-              ))}
-            </div>
-          </div>
-
           <Button
             size="lg"
-            onClick={async () => {
-              try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {}
-              onStart();
-            }}
+            onClick={onStart}
             className="mt-6 h-12 w-full rounded-2xl bg-gradient-primary text-white shadow-elegant animate-pulse-glow"
           >
             Start interview <ArrowRight className="ml-2 h-4 w-4" />
