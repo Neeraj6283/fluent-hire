@@ -360,7 +360,7 @@ export function Candidates() {
                             </AvatarFallback>
                           </Avatar>
                           <div>
-                            <Link href={`/candidates/${c.id}`} className="font-medium hover:underline">
+                            <Link href={`/candidates/${c.id}?assignmentId=${a.id}`} className="font-medium hover:underline">
                               {c.name}
                             </Link>
                             <p className="text-xs text-muted-foreground">{c.email}</p>
@@ -421,7 +421,7 @@ export function Candidates() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-40">
                               <DropdownMenuItem asChild>
-                                <Link href={`/candidates/${c.id}`}>
+                                <Link href={`/candidates/${c.id}?assignmentId=${a.id}`}>
                                   <Eye className="mr-2 h-4 w-4" /> View details
                                 </Link>
                               </DropdownMenuItem>

@@ -256,7 +256,7 @@ export function InterviewDetail() {
                         </td>
                         <td className="py-4 text-right">
                           <Button asChild variant="ghost" size="icon" className="h-8 w-8 rounded-lg opacity-0 transition group-hover:opacity-100">
-                            <Link href={`/candidates/${assignment.candidate.id}`}>
+                            <Link href={`/candidates/${assignment.candidate.id}?assignmentId=${assignment.id}`}>
                               <ExternalLink className="h-3.5 w-3.5" />
                             </Link>
                           </Button>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import {
   ArrowLeft, Mail, Phone, MapPin, Briefcase, FileText, Sparkles,
   ShieldCheck, Target, Lightbulb, TrendingUp, Star, MessageSquare,
@@ -26,8 +26,11 @@ const statusStyle: Record<string, string> = {
 
 export function CandidateDetail() {
   const params = useParams();
+  const searchParams = useSearchParams();
+  const assignmentId = searchParams.get("assignmentId");
   const id = params?.id as string;
   const [candidate, setCandidate] = useState<any>(null);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -35,6 +38,25 @@ export function CandidateDetail() {
       fetchCandidate();
     }
   }, [id]);
+
+  useEffect(() => {
+    if (!candidate?.interviews?.length) return;
+
+    const interviews = candidate.interviews;
+    const requested = assignmentId ? interviews.find((a: any) => a.id === assignmentId) : null;
+
+    if (requested) {
+      setSelectedAssignmentId(requested.id);
+      return;
+    }
+
+    if (!selectedAssignmentId || !interviews.some((a: any) => a.id === selectedAssignmentId)) {
+      const sorted = [...interviews].sort(
+        (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+      setSelectedAssignmentId(sorted[0]?.id || null);
+    }
+  }, [candidate, assignmentId, selectedAssignmentId]);
 
   const fetchCandidate = async () => {
     setLoading(true);
@@ -74,8 +96,8 @@ export function CandidateDetail() {
   }
 
   const c = candidate;
-  const assignment = c.interviews?.[0];
-  const score = assignment?.score ?? c.score ?? 0;
+  const assignment = c.interviews?.find((a: any) => a.id === selectedAssignmentId) ?? c.interviews?.[0] ?? null;
+  const score = assignment?.score ?? c.score ?? null;
   const transcript = assignment?.transcript || [];
   
   let parsedFeedback: any = null;
@@ -115,7 +137,7 @@ export function CandidateDetail() {
   const avgRating = ratings.length ? (ratings.reduce((s, r) => s + r, 0) / ratings.length).toFixed(1) : "—";
   
   const latestInterview = assignment?.interview?.title || "No interview assigned";
-  const displayStatus = assignment?.status || c.status;
+  const displayStatus = assignment?.status || c.status || "—";
   const scheduledDate = assignment?.date 
     ? new Date(assignment.date).toLocaleString('en-US', { 
         timeZone: 'Asia/Kolkata', 
@@ -194,7 +216,7 @@ export function CandidateDetail() {
                 <h2 className="text-xl font-semibold">{c.name}</h2>
                 <p className="text-sm text-muted-foreground">{c.role}</p>
               </div>
-              {score > 0 && (
+              {score != null && (
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Score</p>
                   <p className="text-3xl font-semibold tracking-tight">{score}</p>
@@ -217,7 +239,7 @@ export function CandidateDetail() {
             </div>
           </Card>
 
-          {score > 0 && (
+          {assignment?.status === "Completed" && transcript.length > 0 && score != null && (
             <Card className="ai-border rounded-2xl shadow-glow">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
