@@ -3,13 +3,18 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
 import { logActivity } from "@/lib/activity";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await getAuthUser();
     
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const { searchParams } = new URL(request.url);
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "10");
+    const skip = (page - 1) * limit;
 
     // Fallback for organizationId if not in token
     let orgId = (user as any).organizationId;
@@ -21,26 +26,43 @@ export async function GET() {
       orgId = (dbUser as any)?.organizationId || null;
     }
 
-    const interviews = await (prisma.interview as any).findMany({
-      where: {
-        organizationId: orgId,
-      },
-      include: {
-        user: {
-          select: {
-            name: true,
+    const [interviews, total] = await Promise.all([
+      (prisma.interview as any).findMany({
+        where: {
+          organizationId: orgId,
+        },
+        include: {
+          user: {
+            select: {
+              name: true,
+            },
+          },
+          _count: {
+            select: { questions: true },
           },
         },
-        _count: {
-          select: { questions: true },
+        orderBy: {
+          createdAt: "desc",
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+        skip,
+        take: limit,
+      }),
+      (prisma.interview as any).count({
+        where: {
+          organizationId: orgId,
+        },
+      }),
+    ]);
 
-    return NextResponse.json({ interviews });
+    return NextResponse.json({ 
+      interviews,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
   } catch (error: any) {
     console.error("Failed to fetch interviews:", error);
     return NextResponse.json(
@@ -98,6 +120,27 @@ export async function POST(request: Request) {
 
     // Log Activity
     await logActivity(orgId, (user as any).userId, "interview_created", `Created new interview: ${title}`);
+
+    // Link the latest "generate_questions" usage to this interview
+    try {
+      const latestUsage = await (prisma as any).aIUsage.findFirst({
+        where: {
+          organizationId: orgId,
+          type: "generate_questions",
+          interviewId: null,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (latestUsage) {
+        await (prisma as any).aIUsage.update({
+          where: { id: latestUsage.id },
+          data: { interviewId: interview.id },
+        });
+      }
+    } catch (linkError) {
+      console.error("Failed to link AI usage to interview:", linkError);
+    }
 
     return NextResponse.json({ interview });
   } catch (error: any) {

@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Mic, MicOff, Sparkles, Volume2, Shield, Clock, Loader2, ArrowRight } from "lucide-react";
+import { Mic, MicOff, Sparkles, Volume2, Shield, Clock, Loader2, ArrowRight, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 
 const SILENCE_TIMEOUT = 5000; // 5 seconds silence timeout
@@ -29,6 +30,7 @@ export function CandidateInterview() {
   const [history, setHistory] = useState<Message[]>([]);
   const [muted, setMuted] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -107,14 +109,20 @@ export function CandidateInterview() {
       const response = await fetch("/api/deepgram");
       const { key } = await response.json();
       
-      const socket = new WebSocket("wss://api.deepgram.com/v1/listen?model=nova-2&language=en-IN&smart_format=true", [
+      const socket = new WebSocket("wss://api.deepgram.com/v1/listen?model=nova-2&language=en-IN&smart_format=true&interim_results=true", [
         "token",
         key,
       ]);
 
       socket.onopen = () => {
+        const mimeType = MediaRecorder.isTypeSupported("audio/webm") 
+          ? "audio/webm" 
+          : MediaRecorder.isTypeSupported("audio/mp4") 
+            ? "audio/mp4" 
+            : "";
+
         navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-          const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+          const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
           mediaRecorder.addEventListener("dataavailable", (event) => {
             if (event.data.size > 0 && socket.readyState === 1) {
               socket.send(event.data);
@@ -130,10 +138,15 @@ export function CandidateInterview() {
         if (!received.channel) return;
         const transcriptText = received.channel.alternatives[0].transcript;
         
-        if (transcriptText && received.is_final) {
-          currentTranscriptRef.current += " " + transcriptText;
-          setTranscript(currentTranscriptRef.current.trim());
-          resetSilenceTimer();
+        if (transcriptText) {
+          if (received.is_final) {
+            currentTranscriptRef.current += " " + transcriptText;
+            setTranscript(currentTranscriptRef.current.trim());
+            resetSilenceTimer();
+          } else {
+            // Show interim results
+            setTranscript((currentTranscriptRef.current + " " + transcriptText).trim());
+          }
         }
       };
 
@@ -277,6 +290,7 @@ export function CandidateInterview() {
           question: questions[currentIdx].question,
           answer: userMsg,
           followUpCount: currentFollowUpCount,
+          assignmentId: interview.id,
         }),
       });
 
@@ -352,7 +366,22 @@ export function CandidateInterview() {
     }
   };
 
-  const startInterview = () => {
+  const startInterview = async () => {
+    setIsStarting(true);
+    try {
+      // Update status to "In Progress" in DB
+      await fetch("/api/interview/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignmentId: interview.id }),
+      });
+    } catch (error) {
+      console.error("Error starting interview in DB:", error);
+      // We continue anyway so the candidate can still interview
+    } finally {
+      setIsStarting(false);
+    }
+
     setStarted(true);
     const firstQ = questions[0].question;
     setHistory([{ role: "ai", content: firstQ }]);
@@ -375,7 +404,7 @@ export function CandidateInterview() {
     );
   }
 
-  if (!started) return <StartScreen onStart={startInterview} title={interview?.interview?.title} company={interview?.interview?.organization?.name} count={questions.length} />;
+  if (!started) return <StartScreen onStart={startInterview} title={interview?.interview?.title} company={interview?.interview?.organization?.name} count={questions.length} isStarting={isStarting} />;
 
   const total = questions.length;
   const durationLimit = parseInt(interview?.interview?.duration || "30") * 60;
@@ -484,7 +513,68 @@ export function CandidateInterview() {
   );
 }
 
-function StartScreen({ onStart, title, company, count }: { onStart: () => void; title?: string; company?: string; count: number }) {
+function StartScreen({ onStart, title, company, count, isStarting }: { onStart: () => void; title?: string; company?: string; count: number; isStarting: boolean }) {
+  const [permission, setPermission] = useState<"pending" | "granted" | "denied">("pending");
+  const [audioLevel, setAudioLevel] = useState(0);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const animationRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    checkPermission();
+    return () => {
+      stopTesting();
+    };
+  }, []);
+
+  const checkPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      setPermission("granted");
+      startTesting(stream);
+    } catch (err) {
+      console.error("Mic permission error:", err);
+      setPermission("denied");
+    }
+  };
+
+  const startTesting = (stream: MediaStream) => {
+    const audioContext = new AudioContext();
+    const analyser = audioContext.createAnalyser();
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
+    analyser.fftSize = 256;
+    
+    audioContextRef.current = audioContext;
+    analyserRef.current = analyser;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const updateLevel = () => {
+      analyser.getByteFrequencyData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        sum += dataArray[i];
+      }
+      const average = sum / bufferLength;
+      setAudioLevel(average);
+      animationRef.current = requestAnimationFrame(updateLevel);
+    };
+
+    updateLevel();
+  };
+
+  const stopTesting = () => {
+    if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(err => console.error("Error closing AudioContext:", err));
+    }
+  };
+
   return (
     <div className="relative grid min-h-screen place-items-center overflow-hidden px-6 py-10">
       <div className="pointer-events-none absolute inset-0 bg-gradient-glow" />
@@ -507,24 +597,77 @@ function StartScreen({ onStart, title, company, count }: { onStart: () => void; 
             {count} questions · voice-only · AI will ask follow-up questions if needed.
           </p>
 
-          <ul className="mt-6 space-y-3 text-sm">
-            {[
-              "Find a quiet place",
-              "Speak naturally — silence for 5s will submit your answer",
-              "AI will ask follow-up questions for better evaluation",
-            ].map((t) => (
-              <li key={t} className="flex items-start gap-2">
-                <span className="mt-1 h-1.5 w-1.5 rounded-full bg-ai" /> {t}
-              </li>
-            ))}
-          </ul>
+          <div className="mt-6 space-y-4">
+            <div className="rounded-2xl border bg-muted/30 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className={`p-1.5 rounded-full ${permission === 'granted' ? 'bg-success/10 text-success' : permission === 'denied' ? 'bg-destructive/10 text-destructive' : 'bg-warning/10 text-warning'}`}>
+                    {permission === 'granted' ? <CheckCircle2 className="h-4 w-4" /> : permission === 'denied' ? <XCircle className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
+                  </div>
+                  <span className="text-sm font-medium">
+                    {permission === 'granted' ? 'Microphone ready' : permission === 'denied' ? 'Microphone blocked' : 'Checking microphone...'}
+                  </span>
+                </div>
+                {permission === 'denied' && (
+                  <Button variant="outline" size="sm" className="h-7 rounded-lg text-[11px]" onClick={checkPermission}>
+                    Try again
+                  </Button>
+                )}
+              </div>
+
+              {permission === 'granted' && (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-[11px] text-muted-foreground">
+                    <span>Speak to test your volume</span>
+                    <span>{audioLevel > 5 ? 'Mic is working' : 'No sound detected'}</span>
+                  </div>
+                  <Progress value={Math.min(100, audioLevel * 2)} className="h-1.5" />
+                  {audioLevel < 2 && (
+                    <p className="text-[10px] text-warning flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3" /> If you are speaking but nothing shows, check your mic settings.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {permission === 'denied' && (
+                <p className="text-[11px] text-destructive leading-relaxed">
+                  Please enable microphone access in your browser settings to continue with the interview.
+                </p>
+              )}
+            </div>
+
+            <ul className="space-y-3 text-sm">
+              {[
+                "Find a quiet place",
+                "Speak naturally — silence for 5s will submit your answer",
+                "AI will ask follow-up questions for better evaluation",
+              ].map((t) => (
+                <li key={t} className="flex items-start gap-2">
+                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-ai" /> {t}
+                </li>
+              ))}
+            </ul>
+          </div>
 
           <Button
             size="lg"
-            onClick={onStart}
-            className="mt-6 h-12 w-full rounded-2xl bg-gradient-primary text-white shadow-elegant animate-pulse-glow"
+            onClick={() => {
+              stopTesting();
+              onStart();
+            }}
+            disabled={isStarting || permission !== 'granted'}
+            className="mt-6 h-12 w-full rounded-2xl bg-gradient-primary text-white shadow-elegant"
           >
-            Start interview <ArrowRight className="ml-2 h-4 w-4" />
+            {isStarting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Starting...
+              </>
+            ) : (
+              <>
+                Start interview <ArrowRight className="ml-2 h-4 w-4" />
+              </>
+            )}
           </Button>
 
           <p className="mt-4 text-center text-[11px] text-muted-foreground">

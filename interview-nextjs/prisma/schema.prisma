@@ -18,6 +18,7 @@ model Candidate {
   score          Float?
   resume         String?
   notes          String?
+  linkedinUrl    String?
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
   createdAt      DateTime      @default(now())
@@ -44,6 +45,7 @@ model Interview {
 
   questions   Question[]
   assignments InterviewAssignment[]
+  aiUsage     AIUsage[]
 }
 
 model Question {
@@ -86,8 +88,6 @@ model InterviewAssignment {
 
   candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
-
-  @@unique([candidateId, interviewId])
 }
 
 model User {
@@ -113,6 +113,21 @@ model Organization {
   interviews Interview[]
   candidates Candidate[]
   activities Activity[]
+  aiUsage    AIUsage[]
+}
+
+model AIUsage {
+  id             String   @id @default(cuid())
+  organizationId String
+  interviewId    String?
+  type           String   // e.g., "process_answer", "generate_feedback"
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  totalTokens    Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  interview    Interview?   @relation(fields: [interviewId], references: [id], onDelete: SetNull)
 }
 
 model Activity {

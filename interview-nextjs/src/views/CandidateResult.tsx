@@ -18,7 +18,11 @@ import {
   SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider,
   SidebarTrigger, useSidebar,
 } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { completedResults } from "@/data/candidatePortal";
+import { generateInterviewPDF, parseTranscript } from "@/lib/pdf-utils";
+
+import { toast } from "sonner";
 
 type StoredResult = {
   id: string;
@@ -99,38 +103,11 @@ export function CandidateResult() {
     );
   }
 
-  const qas = [];
-  let currentGroup: any = null;
+  const transcript = Array.isArray(result.answers) ? result.answers : [];
+  const qas = parseTranscript(transcript);
 
-  for (let i = 0; i < result.answers.length; i++) {
-    const msg = result.answers[i];
-
-    if (msg.role === "ai") {
-      // If we have a current group and it doesn't have a score yet, 
-      // the score on this AI message belongs to that group's answer.
-      if (currentGroup && (msg.score !== undefined && msg.score !== null)) {
-        currentGroup.rating = msg.score;
-      }
-
-      // If this AI message is "MOVE_NEXT", it just finished the previous question topic.
-      if (msg.content === "MOVE_NEXT") {
-        continue;
-      }
-
-      // Start a new group for every AI question (main or follow-up)
-      currentGroup = {
-        question: msg.content,
-        answer: "",
-        rating: 0
-      };
-      qas.push(currentGroup);
-    } else if (msg.role === "user" && currentGroup) {
-      // Append user content to the current question group
-      currentGroup.answer += (currentGroup.answer ? " " : "") + msg.content;
-    }
-  }
-
-  const avgRating = result.score ? (result.score / 10).toFixed(1) : "—";
+  const scoreValue = result?.score ?? 0;
+  const avgRating = (Number(scoreValue) / 10).toFixed(1);
 
   const tier =
     result.score >= 80 ? { label: "Excellent", tone: "text-success" }
@@ -153,135 +130,171 @@ export function CandidateResult() {
     "Tie answers back to business impact",
   ];
 
+  const handleDownloadPDF = () => {
+    generateInterviewPDF({
+      userName: result.userName,
+      title: result.title,
+      date: result.date,
+      duration: result.duration,
+      score: result.score,
+      feedback: result.feedback,
+      strengths,
+      improvements,
+      qas
+    });
+
+    // Log activity
+    fetch("/api/activity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "PDF_DOWNLOAD",
+        description: `Downloaded interview report for ${result.title}`
+      })
+    }).catch(err => console.error("Failed to log activity:", err));
+  };
+
   return (
-    <SidebarProvider>
-      <div className="flex min-h-screen w-full bg-background">
-        <ResultSidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-10 flex items-center justify-between border-b bg-background/80 px-6 py-4 backdrop-blur-xl">
-            <div className="flex items-center gap-3">
-              <SidebarTrigger />
-              <Button asChild variant="ghost" size="sm" className="rounded-lg">
-                <Link href="/candidate"><ArrowLeft className="mr-2 h-4 w-4" /> Back to dashboard</Link>
-              </Button>
-              <Badge variant="secondary" className="rounded-full">Interview report</Badge>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" className="rounded-lg">
-                <User className="mr-2 h-4 w-4" /> {result.userName || "Candidate"}
-              </Button>
-              <Button asChild variant="outline" size="sm" className="rounded-lg">
-                <Link href="/"><LogOut className="mr-2 h-4 w-4" /> Sign out</Link>
-              </Button>
-            </div>
-          </header>
-
-          <main className="flex-1 space-y-8 px-6 py-10">
-        <section className="relative overflow-hidden rounded-3xl border bg-gradient-subtle p-8 md:p-10">
-          <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-gradient-ai opacity-25 blur-3xl" />
-          <div className="pointer-events-none absolute -bottom-24 -left-16 h-72 w-72 rounded-full bg-gradient-primary opacity-20 blur-3xl" />
-          <div className="relative flex flex-wrap items-center justify-between gap-8">
-            <div>
-              <Badge className="rounded-full bg-gradient-ai text-white shadow-glow">
-                <Sparkles className="mr-1 h-3 w-3" /> Interview complete
-              </Badge>
-              <h1 className="mt-4 text-3xl font-semibold tracking-tight md:text-4xl">{result.title}</h1>
-              <p className="mt-2 text-sm text-muted-foreground">{result.date} · {result.duration} · {result.answers.length} questions</p>
-              <div className="mt-6 flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" className="rounded-xl"><Share2 className="mr-2 h-4 w-4" /> Share report</Button>
-                <Button size="sm" variant="outline" className="rounded-xl"><Download className="mr-2 h-4 w-4" /> Download PDF</Button>
+    <TooltipProvider>
+      <SidebarProvider>
+        <div className="flex min-h-screen w-full bg-background">
+          <ResultSidebar />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <header className="sticky top-0 z-10 flex items-center justify-between border-b bg-background/80 px-6 py-4 backdrop-blur-xl">
+              <div className="flex items-center gap-3">
+                <SidebarTrigger />
+                <Button asChild variant="ghost" size="sm" className="rounded-lg">
+                  <Link href="/candidate">
+                    <span className="flex items-center">
+                      <ArrowLeft className="mr-2 h-4 w-4" /> Back to dashboard
+                    </span>
+                  </Link>
+                </Button>
+                <Badge variant="secondary" className="rounded-full">Interview report</Badge>
               </div>
-            </div>
-            <div className="flex items-center gap-6">
-              <ScoreRing score={result.score} />
-              <div className="space-y-3">
-                <MiniStat icon={Star} label="Avg rating" value={`${avgRating}/10`} />
-                <MiniStat icon={MessageSquare} label="Answers" value={`${result.answers.length}`} />
-                <MiniStat icon={Trophy} label="Tier" value={tier.label} valueClass={tier.tone} />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="grid gap-6 lg:grid-cols-3">
-          <Card className="ai-border rounded-2xl shadow-glow lg:col-span-2">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-ai text-white"><Sparkles className="h-4 w-4" /></span>
-                  <CardTitle className="text-base">AI overview</CardTitle>
-                </div>
-                <Badge variant="secondary" className="rounded-full text-[10px]">Voxa AI · v1</Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-5 text-sm leading-relaxed">
-              <p>
-                {result.feedback || `Across ${result.answers.length} questions, the candidate demonstrated ${tier.label.toLowerCase()} performance with an average answer rating of ${avgRating}/10.`}
-              </p>
-              <div className="grid gap-4 md:grid-cols-2">
-                <FeedbackBlock icon={ShieldCheck} title="Strengths" tone="success" items={strengths} />
-                <FeedbackBlock icon={Target} title="Areas to improve" tone="warning" items={improvements} />
-              </div>
-              <Separator />
-              <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4">
-                <Lightbulb className="mt-0.5 h-5 w-5 text-ai" />
-                <div>
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">Recommendation</p>
-                  <p className="mt-0.5 text-sm font-semibold">{recommendation}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl border-border/60 shadow-soft">
-            <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-ai" />
-                <CardTitle className="text-base">Skill breakdown</CardTitle>
+                <Button variant="ghost" size="sm" className="rounded-lg">
+                  <User className="mr-2 h-4 w-4" /> {result.userName || "Candidate"}
+                </Button>
+                <Button asChild variant="outline" size="sm" className="rounded-lg">
+                  <Link href="/"><LogOut className="mr-2 h-4 w-4" /> Sign out</Link>
+                </Button>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <SkillBar label="Technical depth" value={Math.min(100, result.score + 4)} />
-              <SkillBar label="Communication" value={Math.min(100, result.score + 8)} />
-              <SkillBar label="Problem solving" value={Math.max(0, result.score - 2)} />
-              <SkillBar label="Clarity" value={Math.min(100, result.score + 2)} />
-            </CardContent>
-          </Card>
-        </section>
+            </header>
 
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Questions & answers</h2>
-          {qas.map((a, i) => (
-            <Card key={i} className="rounded-2xl border-border/60 shadow-soft">
-              <CardContent className="space-y-3 p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-2">
-                    <Badge variant="secondary" className="mt-0.5 rounded-full">Q{i + 1}</Badge>
-                    <p className="font-medium">{a.question}</p>
+            <main className="flex-1 space-y-8 px-6 py-10">
+              <section className="relative overflow-hidden rounded-3xl border bg-gradient-subtle p-8 md:p-10">
+                <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-gradient-ai opacity-25 blur-3xl" />
+                <div className="pointer-events-none absolute -bottom-24 -left-16 h-72 w-72 rounded-full bg-gradient-primary opacity-20 blur-3xl" />
+                <div className="relative flex flex-wrap items-center justify-between gap-8">
+                  <div>
+                    <Badge className="rounded-full bg-gradient-ai text-white shadow-glow">
+                      <Sparkles className="mr-1 h-3 w-3" /> Interview complete
+                    </Badge>
+                    <h1 className="mt-4 text-3xl font-semibold tracking-tight md:text-4xl">{result.title}</h1>
+                    <p className="mt-2 text-sm text-muted-foreground">{result.date} · {result.duration} · {qas.length} questions</p>
+                    <div className="mt-6 flex flex-wrap gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="rounded-xl"
+                        onClick={handleDownloadPDF}
+                      >
+                        <Download className="mr-2 h-4 w-4" /> Download PDF
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 rounded-full bg-ai/10 px-3 py-1 text-ai">
-                    <Star className="h-3.5 w-3.5 fill-current" />
-                    <span className="text-xs font-bold">{a.rating}/10</span>
+                  <div className="flex items-center gap-6">
+                    <ScoreRing score={result.score} />
+                    <div className="space-y-3">
+                      <MiniStat icon={Star} label="Avg rating" value={`${avgRating}/10`} />
+                      <MiniStat icon={MessageSquare} label="Answers" value={`${qas.length}`} />
+                      <MiniStat icon={Trophy} label="Tier" value={tier.label} valueClass={tier.tone} />
+                    </div>
                   </div>
                 </div>
-                <div className="rounded-xl border bg-muted/30 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Your answer</p>
-                  <p className="mt-1 text-sm leading-relaxed">{a.answer || <span className="italic text-muted-foreground">No answer recorded</span>}</p>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </section>
+              </section>
 
-        <div className="flex justify-center pt-4">
-          <Button asChild className="rounded-xl bg-gradient-primary text-white shadow-elegant">
-            <Link href="/candidate"><CheckCircle2 className="mr-2 h-4 w-4" /> Back to dashboard</Link>
-          </Button>
+              <section className="grid gap-6 lg:grid-cols-3">
+                <Card className="ai-border rounded-2xl shadow-glow lg:col-span-2">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-ai text-white"><Sparkles className="h-4 w-4" /></span>
+                        <CardTitle className="text-base">AI overview</CardTitle>
+                      </div>
+                      <Badge variant="secondary" className="rounded-full text-[10px]">Voxa AI · v1</Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-5 text-sm leading-relaxed">
+                    <p>
+                      {result.feedback || `Across ${qas.length} questions, the candidate demonstrated ${tier.label.toLowerCase()} performance with an average answer rating of ${avgRating}/10.`}
+                    </p>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FeedbackBlock icon={ShieldCheck} title="Strengths" tone="success" items={strengths} />
+                      <FeedbackBlock icon={Target} title="Areas to improve" tone="warning" items={improvements} />
+                    </div>
+                    <Separator />
+                    <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4">
+                      <Lightbulb className="mt-0.5 h-5 w-5 text-ai" />
+                      <div>
+                        <p className="text-xs uppercase tracking-wider text-muted-foreground">Recommendation</p>
+                        <p className="mt-0.5 text-sm font-semibold">{recommendation}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="rounded-2xl border-border/60 shadow-soft">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                      <TrendingUp className="h-4 w-4 text-ai" />
+                      <CardTitle className="text-base">Skill breakdown</CardTitle>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <SkillBar label="Technical depth" value={Math.min(100, (Number(result.score) || 0) + 4)} />
+                    <SkillBar label="Communication" value={Math.min(100, (Number(result.score) || 0) + 8)} />
+                    <SkillBar label="Problem solving" value={Math.max(0, (Number(result.score) || 0) - 2)} />
+                    <SkillBar label="Clarity" value={Math.min(100, (Number(result.score) || 0) + 2)} />
+                  </CardContent>
+                </Card>
+              </section>
+
+              <section className="space-y-3">
+                <h2 className="text-lg font-semibold">Questions & answers</h2>
+                {qas.map((a, i) => (
+                  <Card key={i} className="rounded-2xl border-border/60 shadow-soft">
+                    <CardContent className="space-y-3 p-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2">
+                          <Badge variant="secondary" className="mt-0.5 rounded-full">Q{i + 1}</Badge>
+                          <p className="font-medium">{a.question}</p>
+                        </div>
+                        <div className="flex items-center gap-1.5 rounded-full bg-ai/10 px-3 py-1 text-ai">
+                          <Star className="h-3.5 w-3.5 fill-current" />
+                          <span className="text-xs font-bold">{a.rating}/10</span>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border bg-muted/30 p-3">
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Your answer</p>
+                        <p className="mt-1 text-sm leading-relaxed">{a.answer || <span className="italic text-muted-foreground">No answer recorded</span>}</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </section>
+
+              <div className="flex justify-center pt-4">
+                <Button asChild className="rounded-xl bg-gradient-primary text-white shadow-elegant">
+                  <Link href="/candidate"><CheckCircle2 className="mr-2 h-4 w-4" /> Back to dashboard</Link>
+                </Button>
+              </div>
+            </main>
+          </div>
         </div>
-          </main>
-        </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }
 

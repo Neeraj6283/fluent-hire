@@ -107,7 +107,9 @@ export function Login() {
             <div className="grid gap-1.5">
               <div className="flex items-center justify-between">
                 <Label htmlFor="pwd">Password</Label>
-                <a className="text-xs text-primary hover:underline cursor-pointer">Forgot?</a>
+                <Link href="/auth/forgot-password" title="Forgot password?" className="text-xs text-primary hover:underline cursor-pointer">
+                  Forgot?
+                </Link>
               </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

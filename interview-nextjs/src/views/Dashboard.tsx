@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/PageHeader";
 import { useEffect, useState } from "react";
+import { format } from "date-fns";
 
 const kpis = [
   { label: "Total Interviews", value: "1,284", delta: "+12.4%", icon: Mic, spark: [4, 8, 6, 10, 7, 12, 14] },
@@ -90,6 +91,11 @@ export function Dashboard() {
     { label: "Average Score", value: stats?.kpis?.averageScore ?? "0.0", icon: Gauge },
   ];
 
+  const INPUT_RATE = Number(process.env.NEXT_PUBLIC_INPUT_TOKEN_RATE) || 0.15 / 1000000;
+  const OUTPUT_RATE = Number(process.env.NEXT_PUBLIC_OUTPUT_TOKEN_RATE) || 0.60 / 1000000;
+
+  const monthlyCost = (stats?.monthlyTokens?.input || 0) * INPUT_RATE + (stats?.monthlyTokens?.output || 0) * OUTPUT_RATE;
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -98,9 +104,6 @@ export function Dashboard() {
         description="Here's what's happening across your interview pipeline today."
         actions={
           <>
-            <Button variant="outline" className="rounded-xl">
-              <PlayCircle className="mr-2 h-4 w-4" /> Tour
-            </Button>
             <Button asChild className="rounded-xl bg-gradient-primary text-white shadow-elegant">
               <Link href="/interviews/new">
                 <Plus className="mr-2 h-4 w-4" /> New interview
@@ -212,19 +215,29 @@ export function Dashboard() {
 
         <Card className="rounded-2xl border-border/60 shadow-soft">
           <CardHeader>
-            <CardTitle className="text-base">Overall Progress</CardTitle>
+            <CardTitle className="text-base">Monthly Token Usage</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex h-40 items-center justify-center">
+            <div className="flex h-40 flex-col items-center justify-center">
               <div className="text-center">
-                <div className="relative inline-flex items-center justify-center">
-                  <svg className="h-32 w-32 rotate-[-90deg]">
-                    <circle cx="64" cy="64" r="58" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-muted/20" />
-                    <circle cx="64" cy="64" r="58" stroke="currentColor" strokeWidth="8" fill="transparent" strokeDasharray={364} strokeDashoffset={364 - (364 * (stats?.completionRate ?? 0)) / 100} className="text-ai transition-all duration-1000" strokeLinecap="round" />
-                  </svg>
-                  <span className="absolute text-2xl font-bold">{stats?.completionRate ?? 0}%</span>
+                <div className="flex items-baseline gap-1 justify-center">
+                  <span className="text-3xl font-bold tracking-tight">
+                    {isLoading ? (
+                      <Loader2 className="h-6 w-6 animate-spin opacity-20" />
+                    ) : (
+                      (stats?.monthlyTokens?.total || 0).toLocaleString()
+                    )}
+                  </span>
+                  <span className="text-xs text-muted-foreground font-medium uppercase">Tokens</span>
                 </div>
-                <p className="mt-4 text-xs text-muted-foreground">Candidates completed the journey</p>
+                <div className="mt-4 flex flex-col items-center gap-1">
+                  <Badge variant="outline" className="bg-ai/5 border-ai/20 text-ai px-3 py-1 rounded-full font-mono text-sm">
+                    ${monthlyCost.toLocaleString(undefined, { minimumFractionDigits: 5, maximumFractionDigits: 5 })}
+                  </Badge>
+                  <p className="text-[10px] text-muted-foreground mt-1 italic">
+                    Est. cost for {format(new Date(), 'MMMM')}
+                  </p>
+                </div>
               </div>
             </div>
           </CardContent>

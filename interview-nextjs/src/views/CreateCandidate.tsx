@@ -46,11 +46,11 @@ export function CreateCandidate() {
   const [interview, setInterview] = useState<string>("");
   const [resume, setResume] = useState<File | null>(null);
   const [date, setDate] = useState<string>("");
-  const [tz, setTz] = useState("UTC");
+  const [tz, setTz] = useState("Asia/Kolkata");
   const [sendNow, setSendNow] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
-  const [slot, setSlot] = useState<string>("");
+  const [slot, setSlot] = useState<string>("10:00");
   const [expiry, setExpiry] = useState("7");
   const [reminders, setReminders] = useState(true);
   const [aiIntro, setAiIntro] = useState(true);
@@ -99,6 +99,7 @@ export function CreateCandidate() {
       formData.append("email", email);
       formData.append("phone", phone);
       formData.append("role", role);
+      formData.append("linkedinUrl", linkedin);
       formData.append("location", location);
       formData.append("notes", notes);
       formData.append("interviewId", interview);
@@ -299,48 +300,23 @@ export function CreateCandidate() {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                    Date <span className="text-red-500">*</span>
+                    Date (IST) <span className="text-red-500">*</span>
                   </Label>
                   <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-xl" />
                 </div>
                 <div>
                   <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                    Timezone
+                    Time Slot (IST) <span className="text-red-500">*</span>
                   </Label>
-                  <Select value={tz} onValueChange={setTz}>
+                  <Select value={slot} onValueChange={setSlot}>
                     <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {timezones.map((z) => <SelectItem key={z} value={z}>{z}</SelectItem>)}
+                      {slots.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                </div>
-              </div>
-
-              <div>
-                <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                  Time slot <span className="text-red-500">*</span>
-                </Label>
-                <div className="flex flex-wrap gap-2">
-                  {slots.map((s) => {
-                    const active = slot === s;
-                    return (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => setSlot(s)}
-                        className={`rounded-xl border px-3 py-1.5 text-sm transition ${
-                          active
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "border-border/70 hover:border-primary/50 hover:bg-muted/40"
-                        }`}
-                      >
-                        {s}
-                      </button>
-                    );
-                  })}
                 </div>
               </div>
 
@@ -401,7 +377,7 @@ export function CreateCandidate() {
                   label="When"
                   value={
                     date && slot
-                      ? `${date} · ${slot} (${tz})`
+                      ? `${date} · ${slot} (IST)`
                       : "Not scheduled"
                   }
                 />

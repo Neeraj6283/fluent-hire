@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { prisma } from "@/lib/prisma";
 
 const openai = new OpenAI({
   apiKey: process.env.OpenAI_API_KEY,
@@ -7,7 +8,7 @@ const openai = new OpenAI({
 
 export async function POST(req: Request) {
   try {
-    const { history, question, answer, followUpCount } = await req.json();
+    const { history, question, answer, followUpCount, assignmentId } = await req.json();
 
     const prompt = `
       You are a technical interviewer. 
@@ -44,6 +45,29 @@ export async function POST(req: Request) {
     const result = JSON.parse(response.choices[0].message.content || "{}");
     const aiResponse = result.aiResponse || "MOVE_NEXT";
     const score = result.score;
+
+    // Track AI Usage
+    try {
+      const dbAssignment = await (prisma.interviewAssignment as any).findUnique({
+        where: { id: assignmentId },
+        select: { interviewId: true, candidate: { select: { organizationId: true } } }
+      });
+
+      if (dbAssignment) {
+        await (prisma as any).aIUsage.create({
+          data: {
+            organizationId: dbAssignment.candidate.organizationId,
+            interviewId: dbAssignment.interviewId,
+            type: "process_answer",
+            inputTokens: response.usage?.prompt_tokens || 0,
+            outputTokens: response.usage?.completion_tokens || 0,
+            totalTokens: response.usage?.total_tokens || 0,
+          }
+        });
+      }
+    } catch (usageError) {
+      console.error("Failed to track AI usage:", usageError);
+    }
 
     return NextResponse.json({ aiResponse, score });
   } catch (error: any) {

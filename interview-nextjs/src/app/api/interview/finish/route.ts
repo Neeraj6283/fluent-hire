@@ -41,6 +41,9 @@ export async function POST(req: Request) {
           transcript: history,
           status: "Completed",
         },
+        include: {
+          interview: true, // Ensure we load the interview relation
+        },
       });
 
       // 2. Update the candidate's global status and overall score
@@ -52,14 +55,33 @@ export async function POST(req: Request) {
         },
       });
 
-      // 3. Log Activity
-      await (tx.activity as any).create({
+      // Find the associated user to get the correct User ID for the activity log
+      const user = await (tx.user as any).findUnique({
+        where: { email: candidate.email }
+      });
+
+      // 3. Log Activity (Only if user exists)
+      if (user) {
+        await (tx.activity as any).create({
+          data: {
+            organizationId: candidate.organizationId,
+            userId: user.id, // Use the actual User ID, not Candidate ID
+            type: "interview_completed",
+            description: `Completed interview: ${assignment.interview.title}`,
+          },
+        });
+      }
+
+      // 4. Track AI Usage
+      await (tx as any).aIUsage.create({
         data: {
           organizationId: candidate.organizationId,
-          userId: candidate.id, // Candidate is also a user in this context, or we should use admin's ID if available
-          type: "interview_completed",
-          description: `Completed interview: ${assignment.interview.title}`,
-        },
+          interviewId: assignment.interviewId,
+          type: "generate_feedback",
+          inputTokens: completion.usage?.prompt_tokens || 0,
+          outputTokens: completion.usage?.completion_tokens || 0,
+          totalTokens: completion.usage?.total_tokens || 0,
+        }
       });
     });
 

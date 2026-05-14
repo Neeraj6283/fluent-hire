@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { getAuthUser } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -7,6 +9,11 @@ const openai = new OpenAI({
 
 export async function POST(request: Request) {
   try {
+    const authUser = await getAuthUser();
+    if (!authUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { title, category, difficulty, duration, skills } = await request.json();
 
     if (!skills || !Array.isArray(skills) || skills.length === 0) {
@@ -58,6 +65,23 @@ export async function POST(request: Request) {
       ...q,
       id: Date.now() + index,
     }));
+
+    // Track AI Usage
+    try {
+      if (authUser.organizationId) {
+        await (prisma as any).aIUsage.create({
+          data: {
+            organizationId: authUser.organizationId,
+            type: "generate_questions",
+            inputTokens: response.usage?.prompt_tokens || 0,
+            outputTokens: response.usage?.completion_tokens || 0,
+            totalTokens: response.usage?.total_tokens || 0,
+          }
+        });
+      }
+    } catch (usageError) {
+      console.error("Failed to track AI usage during generation:", usageError);
+    }
 
     return NextResponse.json({ questions: questionsWithIds });
   } catch (error: any) {

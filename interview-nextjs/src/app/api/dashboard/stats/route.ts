@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
-import { subDays, startOfDay, endOfDay, format } from "date-fns";
+import { subDays, startOfDay, endOfDay, format, startOfMonth } from "date-fns";
 
 export async function GET() {
   try {
@@ -88,6 +88,26 @@ export async function GET() {
     });
     const completionRate = totalAssignments > 0 ? Math.round((completedAssignments / totalAssignments) * 100) : 0;
 
+    // 5. Monthly Token Usage
+    const currentMonthStart = startOfMonth(new Date());
+    const monthlyUsage = await (prisma as any).aIUsage.findMany({
+      where: {
+        organizationId: orgId,
+        createdAt: { gte: currentMonthStart },
+      },
+      select: {
+        inputTokens: true,
+        outputTokens: true,
+      },
+    });
+
+    const monthlyTokens = monthlyUsage.reduce((acc: any, curr: any) => {
+      acc.input += curr.inputTokens;
+      acc.output += curr.outputTokens;
+      acc.total += (curr.inputTokens + curr.outputTokens);
+      return acc;
+    }, { input: 0, output: 0, total: 0 });
+
     return NextResponse.json({
       kpis: {
         totalInterviews,
@@ -102,6 +122,7 @@ export async function GET() {
       },
       recentActivity: recentActivities,
       completionRate,
+      monthlyTokens,
     });
   } catch (error) {
     console.error("Dashboard Stats Error:", error);

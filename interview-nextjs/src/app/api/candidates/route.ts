@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
-import { sendPasswordSetEmail } from "@/lib/mail";
+import { sendPasswordSetEmail, sendNewInterviewEmail } from "@/lib/mail";
 import { SignJWT } from "jose";
 import bcrypt from "bcryptjs";
 import { writeFile, mkdir } from "fs/promises";
@@ -29,6 +29,7 @@ export async function POST(request: Request) {
     const lastName = formData.get("lastName") as string;
     const email = formData.get("email") as string;
     const role = formData.get("role") as string;
+    const linkedinUrl = formData.get("linkedinUrl") as string;
     const interviewId = formData.get("interviewId") as string;
     const location = formData.get("location") as string;
     const notes = formData.get("notes") as string;
@@ -69,6 +70,16 @@ export async function POST(request: Request) {
 
     const fullName = `${firstName} ${lastName}`.trim();
 
+    // Combine date and timeSlot into a single Date object in IST (UTC+5:30)
+    // We parse as IST and store as the corresponding UTC timestamp
+    const [year, month, day] = date.split('-').map(Number);
+    const [hours, minutes] = (timeSlot || "10:00").split(':').map(Number);
+    
+    // Create date object and manually adjust for IST offset (+5:30)
+    // UTC = IST - 5.5 hours
+    const scheduledDate = new Date(Date.UTC(year, month - 1, day, hours, minutes));
+    scheduledDate.setMinutes(scheduledDate.getMinutes() - 330); // Subtract 330 minutes (5h 30m)
+
     // Generate temp password hash BEFORE transaction (bcrypt is slow)
     const tempPassword = await bcrypt.hash(Math.random().toString(36).slice(-8), 10);
 
@@ -76,6 +87,7 @@ export async function POST(request: Request) {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Create/Get User
       let user = await (tx.user as any).findUnique({ where: { email } });
+      let isNewUser = false;
       
       if (user) {
         if (user.role !== "admin") {
@@ -85,6 +97,7 @@ export async function POST(request: Request) {
           });
         }
       } else {
+        isNewUser = true;
         user = await (tx.user as any).create({
           data: {
             name: fullName,
@@ -105,6 +118,7 @@ export async function POST(request: Request) {
             name: fullName,
             phone,
             role,
+            linkedinUrl,
             location,
             notes,
             resume: resumePath || undefined,
@@ -120,6 +134,7 @@ export async function POST(request: Request) {
             email,
             phone,
             role,
+            linkedinUrl,
             location,
             notes,
             resume: resumePath,
@@ -130,39 +145,24 @@ export async function POST(request: Request) {
         console.log(`DEBUG: Created candidate with status: ${sendEmail ? "Invited" : "Draft"}`);
       }
 
-      // 3. Assign Interview (if not already assigned)
-      const existingAssignment = await tx.interviewAssignment.findUnique({
-        where: {
-          candidateId_interviewId: {
-            candidateId: candidate.id,
-            interviewId: interviewId,
-          }
+      // 3. Assign Interview (Always create a new one as per user request)
+      const assignment = await tx.interviewAssignment.create({
+        data: {
+          candidateId: candidate.id,
+          interviewId: interviewId,
+          status: sendEmail ? "Invited" : "Draft",
+          date: scheduledDate,
+        },
+        include: {
+          interview: true
         }
       });
+      console.log(`DEBUG: Created new assignment with status: ${sendEmail ? "Invited" : "Draft"}`);
 
-      if (!existingAssignment) {
-        await tx.interviewAssignment.create({
-          data: {
-            candidateId: candidate.id,
-            interviewId: interviewId,
-            status: sendEmail ? "Invited" : "Draft",
-            date: date ? new Date(date) : undefined,
-          },
-        });
-        console.log(`DEBUG: Created assignment with status: ${sendEmail ? "Invited" : "Draft"}`);
-      } else {
-        // Update status of existing assignment if needed
-        await tx.interviewAssignment.update({
-          where: { id: existingAssignment.id },
-          data: { status: sendEmail ? "Invited" : "Draft" }
-        });
-        console.log(`DEBUG: Updated existing assignment status to: ${sendEmail ? "Invited" : "Draft"}`);
-      }
-
-      return { candidate, user };
+      return { candidate, user, assignment, isNewUser };
     });
 
-    // 4. Generate token for setting password
+    // 4. Generate token for setting password (only if needed)
     const token = await new SignJWT({ email: result.user.email, userId: result.user.id })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
@@ -175,7 +175,21 @@ export async function POST(request: Request) {
     if (sendEmail) {
       console.log(`DEBUG: Attempting to send email to: ${result.user.email}`);
       try {
-        await sendPasswordSetEmail(result.user.email, result.user.name, token);
+        if (result.isNewUser) {
+          // New user needs to set their password
+          await sendPasswordSetEmail(result.user.email, result.user.name, token);
+        } else {
+          // Existing user just gets a notification with a link to their dashboard
+          await sendNewInterviewEmail(
+            result.user.email, 
+            result.user.name, 
+            result.assignment.interview.title, 
+            date, 
+            timeSlot, 
+            result.assignment.id
+          );
+        }
+        
         emailSent = true;
         console.log("DEBUG: Email sent successfully");
       } catch (error: any) {
@@ -221,35 +235,92 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const authUser = await getAuthUser();
     if (!authUser) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const isExport = searchParams.get("export") === "true";
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "10");
+    const skip = (page - 1) * limit;
+
     const orgId = authUser.organizationId;
     if (!orgId) {
       return NextResponse.json({ error: "Organization not found for user" }, { status: 400 });
     }
 
-    const candidates = await (prisma.candidate as any).findMany({
-      where: {
-        organizationId: orgId
-      },
-      include: {
-        interviews: {
-          include: {
-            interview: true
+    if (isExport) {
+      const allAssignments = await (prisma.interviewAssignment as any).findMany({
+        where: {
+          candidate: {
+            organizationId: orgId
+          }
+        },
+        include: {
+          candidate: true,
+          interview: true
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+      return NextResponse.json({ assignments: allAssignments });
+    }
+
+    const [assignments, total, stats] = await Promise.all([
+      (prisma.interviewAssignment as any).findMany({
+        where: {
+          candidate: {
+            organizationId: orgId
+          }
+        },
+        include: {
+          candidate: true,
+          interview: true
+        },
+        orderBy: {
+          createdAt: 'desc'
+        },
+        skip,
+        take: limit,
+      }),
+      (prisma.interviewAssignment as any).count({
+        where: {
+          candidate: {
+            organizationId: orgId
           }
         }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
-    });
+      }),
+      (prisma.interviewAssignment as any).groupBy({
+        by: ['status'],
+        where: {
+          candidate: {
+            organizationId: orgId
+          }
+        },
+        _count: { _all: true }
+      })
+    ]);
 
-    return NextResponse.json(candidates);
+    const formattedStats = {
+      Invited: stats.find((s: any) => s.status === 'Invited')?._count._all || 0,
+      'In Progress': stats.find((s: any) => s.status === 'In Progress')?._count._all || 0,
+      Completed: stats.find((s: any) => s.status === 'Completed')?._count._all || 0,
+      Expired: stats.find((s: any) => s.status === 'Expired')?._count._all || 0,
+    };
+
+    return NextResponse.json({
+      assignments,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      },
+      stats: formattedStats
+    });
   } catch (error) {
     console.error("Get candidates error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

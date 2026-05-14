@@ -15,10 +15,15 @@ export async function middleware(request: NextRequest) {
     pathname === "/" || 
     pathname === "/signup" || 
     pathname === "/auth/set-password" ||
+    pathname === "/auth/forgot-password" ||
+    pathname === "/auth/reset-password" ||
     pathname.startsWith("/api/auth");
 
   // Define routes that should redirect to dashboard if already authenticated
-  const isAuthRoute = pathname === "/signup";
+  const isAuthRoute = 
+    pathname === "/signup" || 
+    pathname === "/auth/forgot-password" || 
+    pathname === "/auth/reset-password";
 
   if (token) {
     try {

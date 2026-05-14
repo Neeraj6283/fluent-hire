@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Search, MoreHorizontal, Mic, Filter, Eye, Trash2, Loader2, Send } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Mic, Filter, Eye, Trash2, Loader2, Send, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -49,22 +49,38 @@ export function Interviews() {
   const [loading, setLoading] = useState(true);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
+  // Pagination states
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const limit = 10;
+
   // Filter states
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [difficulty, setDifficulty] = useState("all");
 
   useEffect(() => {
+    setPage(1);
+  }, [search, category, difficulty]);
+
+  useEffect(() => {
     fetchInterviews();
-  }, []);
+  }, [page]);
 
   const fetchInterviews = async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/interviews");
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString(),
+      });
+      const response = await fetch(`/api/interviews?${params.toString()}`);
       const data = await response.json();
       if (response.ok) {
         setRows(data.interviews);
+        setTotalPages(data.pagination.totalPages);
+        setTotalRecords(data.pagination.total);
       } else {
         toast.error(data.error || "Failed to load interviews");
       }
@@ -277,6 +293,51 @@ export function Interviews() {
             </table>
           )}
         </div>
+
+        {!loading && filteredRows.length > 0 && (
+          <div className="mt-6 flex items-center justify-between border-t pt-4">
+            <p className="text-sm text-muted-foreground">
+              Showing <span className="font-medium">{(page - 1) * limit + 1}</span> to{" "}
+              <span className="font-medium">
+                {Math.min(page * limit, totalRecords)}
+              </span>{" "}
+              of <span className="font-medium">{totalRecords}</span> results
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-xl h-8"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+              >
+                <ChevronLeft className="mr-1 h-4 w-4" /> Previous
+              </Button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                  <Button
+                    key={p}
+                    variant={page === p ? "default" : "ghost"}
+                    size="sm"
+                    className="h-8 w-8 rounded-xl p-0"
+                    onClick={() => setPage(p)}
+                  >
+                    {p}
+                  </Button>
+                ))}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-xl h-8"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+              >
+                Next <ChevronRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
 
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>

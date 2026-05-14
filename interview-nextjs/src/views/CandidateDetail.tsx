@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import {
   ArrowLeft, Mail, Phone, MapPin, Briefcase, FileText, Sparkles,
   ShieldCheck, Target, Lightbulb, TrendingUp, Star, MessageSquare,
-  CalendarDays, Send, Download, Loader2,
+  CalendarDays, Send, Download, Loader2, Linkedin
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -116,8 +116,16 @@ export function CandidateDetail() {
   
   const latestInterview = assignment?.interview?.title || "No interview assigned";
   const displayStatus = assignment?.status || c.status;
-  const scheduledDate = c.createdAt 
-    ? new Date(c.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const scheduledDate = assignment?.date 
+    ? new Date(assignment.date).toLocaleString('en-US', { 
+        timeZone: 'Asia/Kolkata', 
+        month: 'short', 
+        day: 'numeric', 
+        year: 'numeric', 
+        hour: 'numeric', 
+        minute: '2-digit', 
+        hour12: true 
+      }) + " IST"
     : "—";
 
   const getInitials = (name: string) => {
@@ -198,6 +206,14 @@ export function CandidateDetail() {
               <div className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted-foreground" /> {c.phone || "—"}</div>
               <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" /> {c.location || "—"}</div>
               <div className="flex items-center gap-2"><Briefcase className="h-4 w-4 text-muted-foreground" /> {latestInterview}</div>
+              {c.linkedinUrl && (
+                <div className="flex items-center gap-2">
+                  <Linkedin className="h-4 w-4 text-muted-foreground" /> 
+                  <a href={c.linkedinUrl.startsWith('http') ? c.linkedinUrl : `https://${c.linkedinUrl}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline truncate max-w-[200px]">
+                    LinkedIn Profile
+                  </a>
+                </div>
+              )}
             </div>
           </Card>
 

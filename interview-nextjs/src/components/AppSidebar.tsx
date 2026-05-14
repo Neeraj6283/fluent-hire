@@ -25,7 +25,6 @@ import {
   SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Badge } from "@/components/ui/badge";
 
 const items = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
@@ -76,25 +75,6 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
-        {!collapsed && (
-          <div className="mx-3 mt-4 rounded-2xl bg-gradient-ai p-[1px] shadow-elegant">
-            <div className="rounded-2xl bg-card p-4">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-3.5 w-3.5 text-ai" />
-                <span className="text-xs font-medium">AI Credits</span>
-              </div>
-              <div className="mt-3 flex items-end justify-between">
-                <span className="text-2xl font-semibold tracking-tight">2,450</span>
-                <Badge variant="secondary" className="text-[10px]">Pro</Badge>
-              </div>
-              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div className="h-full w-[68%] rounded-full bg-gradient-ai" />
-              </div>
-              <p className="mt-2 text-[10px] text-muted-foreground">68% of monthly quota used</p>
-            </div>
-          </div>
-        )}
       </SidebarContent>
 
       <SidebarFooter className="border-t">
